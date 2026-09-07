@@ -20,7 +20,7 @@ subscriptions = {}
 # --- 建立機器人與伺服器 ---
 intents = discord.Intents.default()
 intents.message_content = True # 允許讀取訊息內容以接收指令
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="$", intents=intents)
 app = FastAPI()
 
 # ==========================================
