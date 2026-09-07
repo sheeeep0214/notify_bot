@@ -54,7 +54,8 @@ async def subscribe_channel(ctx, platform: str, target_id: str):
     topic_url = f"https://www.youtube.com/xml/schemas/2015/feeds/videos.xml?channel_id={target_id}"
     callback_url = f"{PUBLIC_URL}/yt-webhook"
     
-    async with httpx.AsyncClient() as client:
+    # 使用 AsyncClient 並設定 timeout=20.0 秒，避免發生 ReadTimeout 崩潰
+    async with httpx.AsyncClient(timeout=20.0) as client:
         try:
             # 3. 發送連線請求
             response = await client.post(YOUTUBE_HUB_URL, data={
@@ -77,10 +78,12 @@ async def subscribe_channel(ctx, platform: str, target_id: str):
                 await ctx.send(f"⚠️ 註冊請求已發送，但 YouTube 回應異常 (狀態碼: {response.status_code})")
                 print(f"Hub response: {response.text}")
                 
+        except httpx.ReadTimeout:
+            await ctx.send("❌ 連線至 YouTube Hub 逾時 (ReadTimeout)，可能是 YouTube 伺服器目前回應較慢，請稍後再試一次。")
         except Exception as e:
             # 加入詳細追蹤，方便我們在 Render 日誌中除錯
             print(f"詳細連線錯誤：\n{traceback.format_exc()}")
-            await ctx.send(f"❌ 連線失敗！已將錯誤記錄在 Render 日誌中，請查看。({e})")
+            await ctx.send(f"❌ 連線失敗！已將錯誤記錄在 Render 日誌中，請查看。")
 
 # ==========================================
 # 2. FastAPI 伺服器路由 (Webhook 接收站)
