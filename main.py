@@ -48,7 +48,7 @@ async def on_command_error(ctx, error):
     print(f"Command Error: {error}")
 
 # ==========================================
-# 1. 統一指令區 (支援 YT & IG)
+# 1. 統一指令區 (支援 YT & IG 訂閱、管理與設定)
 # ==========================================
 @bot.command(name="sub")
 async def subscribe_channel(ctx, platform: str, target_id: str, ig_type: str = "all"):
@@ -87,7 +87,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str, ig_type: str = "
             )
             await ctx.send(f"✅ 已更新 IG 帳號 `{target_id}` 的訂閱類型為：**{ig_type}**")
         else:
-            # 🌟 IG 帳號存在與否的事前驗證
             if IG_API_KEY:
                 await ctx.send("🔍 正在驗證 IG 帳號是否存在，請稍候...")
                 
@@ -150,6 +149,64 @@ async def unsubscribe_channel(ctx, platform: str, target_id: str):
         await ctx.send(f"✅ 已成功取消訂閱 {platform.upper()}: `{target_id}`")
     else:
         await ctx.send("⚠️ 尚未在此文字頻道訂閱該帳號，無法取消。")
+
+@bot.command(name="list")
+async def list_subscriptions(ctx):
+    dc_id = str(ctx.channel.id)
+    cursor = subscriptions_col.find({})
+    all_docs = await cursor.to_list(length=None)
+    
+    yt_list = []
+    ig_list = []
+    
+    for doc in all_docs:
+        channels = doc.get("channels", {})
+        if dc_id in channels:
+            if "yt_id" in doc:
+                yt_list.append(doc["yt_id"])
+            elif "ig_id" in doc:
+                config = channels[dc_id]
+                types = config.get("types", ["photo", "video"])
+                type_str = "all" if len(types) == 2 else types[0]
+                ig_list.append(f"{doc['ig_id']} (類型: {type_str})")
+                
+    if not yt_list and not ig_list:
+        await ctx.send("📂 此文字頻道目前沒有訂閱任何 YouTube 頻道或 IG 帳號。")
+        return
+        
+    msg = "📋 **此文字頻道目前的訂閱清單：**\n"
+    if yt_list:
+        msg += "\n**▶️ YouTube 頻道：**\n" + "\n".join([f"- `{yt}`" for yt in yt_list])
+    if ig_list:
+        msg += "\n\n**📸 Instagram 帳號：**\n" + "\n".join([f"- `{ig}`" for ig in ig_list])
+        
+    await ctx.send(msg)
+
+@bot.command(name="clear")
+async def clear_all_subscriptions(ctx):
+    dc_id = str(ctx.channel.id)
+    cursor = subscriptions_col.find({})
+    all_docs = await cursor.to_list(length=None)
+    
+    count = 0
+    for doc in all_docs:
+        channels = doc.get("channels", {})
+        if dc_id in channels:
+            query_key = "yt_id" if "yt_id" in doc else "ig_id"
+            target_id = doc[query_key]
+            
+            # 移除該文字頻道
+            await subscriptions_col.update_one({query_key: target_id}, {"$unset": {f"channels.{dc_id}": ""}})
+            # 如果該訂閱項目已經沒有任何頻道在追蹤，直接刪除整筆文件
+            updated_doc = await subscriptions_col.find_one({query_key: target_id})
+            if not updated_doc.get("channels"):
+                await subscriptions_col.delete_one({query_key: target_id})
+            count += 1
+            
+    if count == 0:
+        await ctx.send("⚠️ 此文字頻道本來就沒有任何訂閱。")
+    else:
+        await ctx.send(f"🗑️ 已成功清除此文字頻道的所有訂閱（共解除 {count} 個項目）！")
 
 @bot.command(name="msg")
 async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, *, custom_message: str = None):
