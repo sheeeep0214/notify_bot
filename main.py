@@ -88,7 +88,40 @@ async def subscribe_channel(ctx, platform: str, target_id: str, ig_type: str = "
             )
             await ctx.send(f"✅ 已更新 IG 帳號 `{target_id}` 的訂閱類型為：**{ig_type}**")
         else:
-            # 建立新的 IG 訂閱
+            # 🌟 新增：驗證 IG 帳號是否存在
+            if IG_API_KEY:
+                await ctx.send("🔍 正在驗證 IG 帳號是否存在，請稍候...")
+                
+                api_url = "https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_posts.php"
+                headers = {
+                    "X-RapidAPI-Key": IG_API_KEY,
+                    "X-RapidAPI-Host": "instagram-scraper-stable-api.p.rapidapi.com",
+                    "Content-Type": "application/x-www-form-urlencoded"
+                }
+                
+                import urllib.parse
+                ig_url = f"https://www.instagram.com/{target_id}/"
+                payload = urllib.parse.urlencode({'username_or_url': ig_url, 'amount': 1})
+                
+                async with aiohttp.ClientSession() as session:
+                    try:
+                        async with session.post(api_url, headers=headers, data=payload) as response:
+                            if response.status != 200:
+                                await ctx.send(f"⚠️ 驗證 API 回應異常 (HTTP {response.status})，無法訂閱。")
+                                return
+                            result = await response.json()
+                            
+                            # 檢查 API 是否回傳錯誤訊息 (例如 user does not exist)
+                            if "error" in result:
+                                await ctx.send(f"❌ 找不到該 IG 帳號或帳號無效：`{target_id}`\n({result['error']})")
+                                return
+                    except Exception as e:
+                        await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}")
+                        return
+            else:
+                await ctx.send("⚠️ 尚未設定 IG_API_KEY，跳過事前驗證直接訂閱。")
+
+            # 驗證通過，建立新的 IG 訂閱
             update_query = {
                 "$set": {
                     f"channels.{dc_id}": {
@@ -102,59 +135,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str, ig_type: str = "
             await ctx.send(f"✅ 成功訂閱 IG 帳號: `{target_id}`！\n(接收類型：{ig_type})")
     else:
         await ctx.send("⚠️ 目前僅支援 `yt` (YouTube) 與 `ig` (Instagram)。")
-
-@bot.command(name="unsub")
-async def unsubscribe_channel(ctx, platform: str, target_id: str):
-    platform = platform.lower()
-    if platform not in ["yt", "ig"]: return
-    
-    dc_id = str(ctx.channel.id)
-    query_key = "yt_id" if platform == "yt" else "ig_id"
-    
-    doc = await subscriptions_col.find_one({query_key: target_id})
-    if doc and dc_id in doc.get("channels", {}):
-        await subscriptions_col.update_one({query_key: target_id}, {"$unset": {f"channels.{dc_id}": ""}})
-        updated_doc = await subscriptions_col.find_one({query_key: target_id})
-        if not updated_doc.get("channels"):
-            await subscriptions_col.delete_one({query_key: target_id})
-        await ctx.send(f"✅ 已成功取消訂閱 {platform.upper()}: `{target_id}`")
-    else:
-        await ctx.send("⚠️ 尚未在此文字頻道訂閱該帳號，無法取消。")
-
-@bot.command(name="msg")
-async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, *, custom_message: str = None):
-    platform = platform.lower()
-    msg_type = msg_type.lower()
-    dc_id = str(ctx.channel.id)
-
-    if platform == "yt":
-        if msg_type not in ["video", "live"]:
-            await ctx.send("⚠️ YT 格式錯誤！請輸入 `video` 或 `live`")
-            return
-        query_key = "yt_id"
-    elif platform == "ig":
-        if msg_type not in ["photo", "video"]:
-            await ctx.send("⚠️ IG 格式錯誤！請輸入 `photo` 或 `video`")
-            return
-        query_key = "ig_id"
-    else:
-        return
-        
-    doc = await subscriptions_col.find_one({query_key: target_id})
-    if not doc or dc_id not in doc.get("channels", {}):
-        await ctx.send(f"⚠️ 請先使用 `$sub` 訂閱該帳號，才能設定專屬訊息。")
-        return
-
-    if custom_message:
-        custom_message = custom_message.replace("\\n", "\n")
-
-    await subscriptions_col.update_one(
-        {query_key: target_id}, 
-        {"$set": {f"channels.{dc_id}.{msg_type}": custom_message}}
-    )
-    
-    status = "預設訊息" if custom_message is None else "專屬訊息"
-    await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
 # ==========================================
 # 2. YouTube 監控輪詢 
