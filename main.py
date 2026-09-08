@@ -4,12 +4,12 @@ import asyncio
 import os
 import feedparser
 import traceback
-from aiohttp import web  # 用來建立假網頁伺服器
+from aiohttp import web
 
 # --- 環境變數設定 ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 
-# 儲存使用者的訂閱清單: { "YouTube頻道ID": ["Discord頻道ID_1", "Discord頻道ID_2"] }
+# 新版資料結構：{ "YouTube頻道ID": { "Discord頻道ID": "自訂訊息字串 (若無則為 None)" } }
 subscriptions = {}
 seen_videos = set()
 
@@ -23,6 +23,9 @@ async def on_ready():
     print(f'Bot 已登入為：{bot.user}')
     check_youtube_updates.start()
 
+# ==========================================
+# 1. 訂閱功能 ($sub)
+# ==========================================
 @bot.command(name="sub")
 async def subscribe_channel(ctx, platform: str, target_id: str):
     """
@@ -39,19 +42,77 @@ async def subscribe_channel(ctx, platform: str, target_id: str):
          return
         
     if target_id not in subscriptions:
-        subscriptions[target_id] = []
-    subscriptions[target_id].append(channel_id)
+        subscriptions[target_id] = {}
+        
+    # 預設自訂訊息為 None (使用系統預設)
+    subscriptions[target_id][channel_id] = None
     
-    await ctx.send(f"✅ 成功訂閱 YouTube 頻道 ID: `{target_id}`！未來有新影片將自動推播至本頻道。")
+    await ctx.send(f"✅ 成功訂閱 YouTube 頻道 ID: `{target_id}`！\n💡 提示：可使用 `$msg yt {target_id} 你的自訂訊息` 來更改推播格式。")
 
+# ==========================================
+# 2. 取消訂閱功能 ($unsub)
+# ==========================================
+@bot.command(name="unsub")
+async def unsubscribe_channel(ctx, platform: str, target_id: str):
+    """
+    指令用法: $unsub yt UC_x5XG1OV2P6uZZ5FSM9Ttw
+    """
+    if platform.lower() != "yt":
+        await ctx.send("目前僅支援 yt (YouTube)。")
+        return
+
+    channel_id = str(ctx.channel.id)
+    
+    if target_id in subscriptions and channel_id in subscriptions[target_id]:
+        # 刪除該 Discord 頻道的訂閱紀錄
+        del subscriptions[target_id][channel_id]
+        
+        # 如果該 YouTube 頻道沒有任何 Discord 頻道訂閱了，就清空它以節省資源
+        if not subscriptions[target_id]:
+            del subscriptions[target_id]
+            
+        await ctx.send(f"✅ 已成功取消訂閱頻道 ID: `{target_id}`")
+    else:
+        await ctx.send("⚠️ 這個頻道尚未在此文字頻道訂閱，無法取消。")
+
+# ==========================================
+# 3. 自訂訊息功能 ($msg)
+# ==========================================
+@bot.command(name="msg")
+async def set_custom_message(ctx, platform: str, target_id: str, *, custom_message: str = None):
+    """
+    指令用法: $msg yt UC_x5XG1OV2P6uZZ5FSM9Ttw 🔔 快來看 {author} 的新影片：{title} \n {link}
+    """
+    if platform.lower() != "yt":
+        await ctx.send("目前僅支援 yt (YouTube)。")
+        return
+
+    channel_id = str(ctx.channel.id)
+    
+    if target_id not in subscriptions or channel_id not in subscriptions[target_id]:
+        await ctx.send("⚠️ 請先使用 `$sub` 訂閱該頻道，才能設定專屬訊息。")
+        return
+
+    if custom_message is None:
+        # 若用戶未輸入訊息，則恢復預設值
+        subscriptions[target_id][channel_id] = None
+        await ctx.send(f"✅ 頻道 `{target_id}` 的推播已恢復為**預設訊息格式**。")
+    else:
+        # 寫入用戶的自訂訊息
+        subscriptions[target_id][channel_id] = custom_message
+        await ctx.send(f"✅ 頻道 `{target_id}` 的專屬訊息設定成功！\n未來的推播格式預覽：\n{custom_message}")
+
+# ==========================================
+# 4. 背景輪詢排程 (RSS 解析與推播)
+# ==========================================
 @tasks.loop(minutes=3)
 async def check_youtube_updates():
     if not subscriptions:
         return
         
     print("正在檢查 YouTube 頻道更新...")
-    for channel_id in list(subscriptions.keys()):
-        feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+    for yt_channel_id in list(subscriptions.keys()):
+        feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={yt_channel_id}"
         
         try:
             feed = feedparser.parse(feed_url)
@@ -69,21 +130,28 @@ async def check_youtube_updates():
                 if len(seen_videos) > 500:
                     seen_videos.pop()
                 
-                for dc_channel_id in subscriptions[channel_id]:
+                # 針對每一個訂閱該 YT 頻道的 Discord 頻道發送通知
+                for dc_channel_id, custom_msg in subscriptions[yt_channel_id].items():
                     dc_channel = bot.get_channel(int(dc_channel_id))
                     if dc_channel:
-                        await dc_channel.send(
-                            f"🔔 **{author_name}** 發布了新影片！\n**{video_title}**\n{video_link}"
-                        )
+                        # 決定要使用的模板
+                        template = custom_msg if custom_msg else "🔔 **{author}** 發布了新影片！\n**{title}**\n{link}"
+                        
+                        # 替換字串變數
+                        final_msg = template.replace("{author}", author_name)\
+                                            .replace("{title}", video_title)\
+                                            .replace("{link}", video_link)
+                                            
+                        await dc_channel.send(final_msg)
         except Exception as e:
-            print(f"檢查頻道 {channel_id} 失敗: {e}")
+            print(f"檢查頻道 {yt_channel_id} 失敗: {e}")
 
 @check_youtube_updates.before_loop
 async def before_check():
     await bot.wait_until_ready()
 
 # ==========================================
-# 建立一個假的 Web 伺服器來應付 Render 的 Port 檢查機制
+# 5. 假 Web 伺服器 (繞過 Render 檢查)
 # ==========================================
 async def handle(request):
     return web.Response(text="Discord Bot is alive and running!")
@@ -94,21 +162,19 @@ async def start_dummy_server():
     runner = web.AppRunner(app)
     await runner.setup()
     
-    # Render 會動態分配 PORT 環境變數
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     print(f"假伺服器已啟動於 Port {port} 以滿足 Render 需求")
 
 # ==========================================
-# 系統啟動管理
+# 6. 系統啟動管理
 # ==========================================
 async def main():
     if not DISCORD_TOKEN:
         print("❌ 錯誤：未設定 DISCORD_TOKEN 環境變數。")
         return
     
-    # 同時啟動「假伺服器」與「Discord 機器人」
     await start_dummy_server()
     await bot.start(DISCORD_TOKEN)
 
