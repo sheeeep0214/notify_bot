@@ -40,6 +40,11 @@ async def on_ready():
             
     check_youtube_updates.start()
 
+@bot.event
+async def on_command_error(ctx, error):
+    await ctx.send(f"❌ [系統報錯] 指令執行失敗！錯誤原因：\n`{error}`")
+    print(f"Command Error: {error}")
+
 # ==========================================
 # 1. 指令區
 # ==========================================
@@ -65,7 +70,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str):
         await ctx.send("⚠️ 這個頻道已經在該文字頻道訂閱過了。")
         return
 
-    # 升級資料庫結構，預留 video 與 live 兩種訊息欄位
     update_query = {"$set": {f"channels.{dc_id}": {"video": None, "live": None}}}
     await subscriptions_col.update_one({"yt_id": target_id}, update_query, upsert=True)
     
@@ -89,7 +93,6 @@ async def unsubscribe_channel(ctx, platform: str, target_id: str):
 async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, *, custom_message: str = None):
     if platform.lower() != "yt": return
     
-    # 強制要求使用者區分是設定 video 還是 live
     msg_type = msg_type.lower()
     if msg_type not in ["video", "live"]:
         await ctx.send("⚠️ 格式錯誤！請輸入 `$msg yt <頻道ID> video <訊息>` 或 `$msg yt <頻道ID> live <訊息>`")
@@ -102,20 +105,29 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
         await ctx.send("⚠️ 請先使用 `$sub` 訂閱該頻道，才能設定專屬訊息。")
         return
 
+    current_data = doc["channels"].get(dc_id)
+    if not isinstance(current_data, dict):
+        old_msg = current_data if isinstance(current_data, str) else None
+        await subscriptions_col.update_one(
+            {"yt_id": target_id}, 
+            {"$set": {f"channels.{dc_id}": {"video": old_msg, "live": old_msg}}}
+        )
+
     if custom_message:
         custom_message = custom_message.replace("\\n", "\n")
 
-    # 將訊息寫入對應的分類欄位
-    await subscriptions_col.update_one({"yt_id": target_id}, {"$set": {f"channels.{dc_id}.{msg_type}": custom_message}})
+    await subscriptions_col.update_one(
+        {"yt_id": target_id}, 
+        {"$set": {f"channels.{dc_id}.{msg_type}": custom_message}}
+    )
     
     if custom_message is None:
-        await ctx.send(f"✅ 頻道 `{target_id}` 的 **{msg_type} (發片/直播)** 推播已恢復為預設訊息。")
+        await ctx.send(f"✅ 頻道 `{target_id}` 的 **{msg_type}** 推播已恢復為預設訊息。")
     else:
-        await ctx.send(f"✅ 頻道 `{target_id}` 的 **{msg_type} (發片/直播)** 專屬訊息設定成功！")
-
+        await ctx.send(f"✅ 頻道 `{target_id}` 的 **{msg_type}** 專屬訊息設定成功！")
 
 # ==========================================
-# 2. 防漏抓 API 輪詢排程 (進階狀態過濾版)
+# 2. 防漏抓 API 輪詢排程 
 # ==========================================
 @tasks.loop(minutes=2)
 async def check_youtube_updates():
@@ -135,7 +147,6 @@ async def check_youtube_updates():
             if not yt_channel_id.startswith("UC"): continue
                 
             playlist_id = "UU" + yt_channel_id[2:]
-            # 步驟一：先抓取最新 5 部影片的 ID
             api_url = f"https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId={playlist_id}&maxResults=5&key={YOUTUBE_API_KEY}"
             
             try:
@@ -146,8 +157,6 @@ async def check_youtube_updates():
                     if not items: continue
                     
                     video_ids = [item["snippet"]["resourceId"]["videoId"] for item in items]
-                    
-                    # 步驟二：拿著這些 ID 去 Videos API 查詢「即時直播狀態」
                     vids_str = ",".join(video_ids)
                     vid_api_url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id={vids_str}&key={YOUTUBE_API_KEY}"
                     
@@ -155,41 +164,35 @@ async def check_youtube_updates():
                         if v_response.status != 200: continue
                         v_data = await v_response.json()
                         
-                        # 翻轉順序，讓舊的先發
                         for v_item in reversed(v_data.get("items", [])):
                             video_id = v_item["id"]
                             snippet = v_item["snippet"]
                             
-                            # 取得狀態：none (一般), live (直播中), upcoming (預告)
                             broadcast_status = snippet.get("liveBroadcastContent", "none")
                             
-                            # 🌟 核心過濾機制：如果是「預告中」，直接無視跳過！
                             if broadcast_status == "upcoming":
                                 continue
                                 
                             if await history_col.find_one({"video_id": video_id}):
                                 continue
                                 
-                            # 記錄到歷史，避免重複發送
                             await history_col.insert_one({"video_id": video_id})
                             
                             video_title = snippet["title"]
                             author_name = snippet["channelTitle"]
                             video_link = f"https://www.youtube.com/watch?v={video_id}"
                             
-                            # 判斷當下是直播還是發片
                             current_type = "live" if broadcast_status == "live" else "video"
                             
                             for dc_id, custom_msgs in dc_channels.items():
                                 dc_channel = bot.get_channel(int(dc_id))
                                 if not dc_channel: continue
                                 
-                                # 相容舊版資料與讀取新版訊息設定
                                 custom_msg = None
                                 if isinstance(custom_msgs, dict):
                                     custom_msg = custom_msgs.get(current_type)
                                 elif isinstance(custom_msgs, str):
-                                    custom_msg = custom_msgs # 舊版 fallback
+                                    custom_msg = custom_msgs 
                                 
                                 if not custom_msg:
                                     if current_type == "live":
