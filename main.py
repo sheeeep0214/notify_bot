@@ -19,45 +19,57 @@ bot = commands.Bot(command_prefix="$", intents=intents)
 # --- 資料庫變數 ---
 db_client = None
 db = None
-subscriptions_col = None  # 儲存訂閱資料: {yt_id: "UC...", channels: {dc_id: "自訂訊息"}}
-history_col = None       # 儲存已推播過的影片 ID: {video_id: "..."}
+subscriptions_col = None  
+history_col = None       
 
 @bot.event
 async def on_ready():
     global db_client, db, subscriptions_col, history_col
     print(f'Bot 已登入為：{bot.user}')
     
-    # 初始化資料庫連線
     if MONGO_URI:
         try:
             db_client = AsyncIOMotorClient(MONGO_URI)
             db = db_client["youtube_notifier"]
             subscriptions_col = db["subscriptions"]
             history_col = db["history"]
-            print("✅ 成功連接 MongoDB 資料庫！")
+            print("✅ 成功讀取 MongoDB 連線字串！")
         except Exception as e:
-            print(f"❌ MongoDB 連線失敗: {e}")
+            print(f"❌ MongoDB 字串解析失敗: {e}")
             return
             
     check_youtube_updates.start()
 
 # ==========================================
-# 1. 指令區：操作 MongoDB
+# 1. 指令區
 # ==========================================
 @bot.command(name="sub")
 async def subscribe_channel(ctx, platform: str, target_id: str):
+    print(f"📍 [Debug] 收到 $sub 指令！準備進入資料庫查詢...")
+    
     if platform.lower() != "yt":
         await ctx.send("目前僅支援 yt (YouTube) 訂閱。")
         return
 
     dc_id = str(ctx.channel.id)
-    doc = await subscriptions_col.find_one({"yt_id": target_id})
     
+    try:
+        # 加上 timeout 強制限制，防止卡死
+        doc = await asyncio.wait_for(subscriptions_col.find_one({"yt_id": target_id}), timeout=10.0)
+        print("📍 [Debug] 資料庫查詢成功！")
+    except asyncio.TimeoutError:
+        print("❌ [Debug] 資料庫連線逾時 (Timeout)！")
+        await ctx.send("⚠️ 機器人無法連線至資料庫！請檢查 MongoDB 的 Network Access 是否有設定 `0.0.0.0/0`，或密碼是否輸入正確。")
+        return
+    except Exception as e:
+        print(f"❌ [Debug] 資料庫查詢發生未知錯誤: {e}")
+        await ctx.send(f"⚠️ 資料庫發生錯誤: {e}")
+        return
+
     if doc and dc_id in doc.get("channels", {}):
         await ctx.send("⚠️ 這個頻道已經在該文字頻道訂閱過了。")
         return
 
-    # 使用 $set 來更新或新增頻道
     update_query = {"$set": {f"channels.{dc_id}": None}}
     await subscriptions_col.update_one({"yt_id": target_id}, update_query, upsert=True)
     
@@ -72,10 +84,8 @@ async def unsubscribe_channel(ctx, platform: str, target_id: str):
     doc = await subscriptions_col.find_one({"yt_id": target_id})
     
     if doc and dc_id in doc.get("channels", {}):
-        # 從資料庫中移除該 Discord 頻道
         await subscriptions_col.update_one({"yt_id": target_id}, {"$unset": {f"channels.{dc_id}": ""}})
         
-        # 檢查該 YouTube 頻道是否還有其他 Discord 頻道訂閱，若無則整筆刪除
         updated_doc = await subscriptions_col.find_one({"yt_id": target_id})
         if not updated_doc.get("channels"):
             await subscriptions_col.delete_one({"yt_id": target_id})
@@ -97,7 +107,6 @@ async def set_custom_message(ctx, platform: str, target_id: str, *, custom_messa
         return
 
     if custom_message:
-        # 將使用者輸入的 \n 轉換為真實換行符號
         custom_message = custom_message.replace("\\n", "\n")
 
     await subscriptions_col.update_one({"yt_id": target_id}, {"$set": {f"channels.{dc_id}": custom_message}})
@@ -108,16 +117,18 @@ async def set_custom_message(ctx, platform: str, target_id: str, *, custom_messa
         await ctx.send(f"✅ 頻道 `{target_id}` 的專屬訊息設定成功！")
 
 # ==========================================
-# 2. 防漏抓 API 輪詢排程 (一次檢查前 5 部)
+# 2. 防漏抓 API 輪詢排程 
 # ==========================================
 @tasks.loop(minutes=2)
 async def check_youtube_updates():
     if not YOUTUBE_API_KEY or subscriptions_col is None:
         return
 
-    # 取得所有資料庫中的訂閱紀錄
-    cursor = subscriptions_col.find({})
-    all_subs = await cursor.to_list(length=None)
+    try:
+        cursor = subscriptions_col.find({})
+        all_subs = await cursor.to_list(length=None)
+    except Exception:
+        return # 避免資料庫斷線時背景任務當機
     
     if not all_subs:
         return
@@ -132,7 +143,6 @@ async def check_youtube_updates():
                 continue
                 
             playlist_id = "UU" + yt_channel_id[2:]
-            # maxResults=5：一次抓取最新 5 部影片，防止短時間連發導致漏抓
             api_url = f"https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId={playlist_id}&maxResults=5&key={YOUTUBE_API_KEY}"
             
             try:
@@ -144,14 +154,12 @@ async def check_youtube_updates():
                     if not data.get("items"):
                         continue
                     
-                    # 將抓到的影片清單反轉 (讓最舊的先推播，最新的最後推播)
                     items = reversed(data["items"])
                     
                     for item in items:
                         snippet = item["snippet"]
                         video_id = snippet["resourceId"]["videoId"]
                         
-                        # 去 MongoDB 檢查這部影片是否推播過
                         if await history_col.find_one({"video_id": video_id}):
                             continue
                             
@@ -159,10 +167,8 @@ async def check_youtube_updates():
                         author_name = snippet["channelTitle"]
                         video_link = f"https://www.youtube.com/watch?v={video_id}"
                         
-                        # 紀錄到歷史資料庫
                         await history_col.insert_one({"video_id": video_id})
                         
-                        # 推播給所有訂閱的頻道
                         for dc_id, custom_msg in dc_channels.items():
                             dc_channel = bot.get_channel(int(dc_id))
                             if dc_channel:
@@ -179,7 +185,7 @@ async def before_check():
     await bot.wait_until_ready()
 
 # ==========================================
-# 3. 假 Web 伺服器 (保持 Render 存活)
+# 3. 假 Web 伺服器
 # ==========================================
 async def handle(request):
     return web.Response(text="Discord Bot is alive, using YT API & MongoDB!")
