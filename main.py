@@ -56,6 +56,27 @@ async def subscribe_channel(ctx, platform: str, target_id: str, ig_type: str = "
     dc_id = str(ctx.channel.id)
 
     if platform == "yt":
+        if not target_id.startswith("UC"):
+            await ctx.send("⚠️ YouTube 頻道 ID 通常是 `UC` 開頭，請確認格式！")
+            return
+
+        channel_title = target_id
+        if YOUTUBE_API_KEY:
+            channel_api_url = f"https://www.googleapis.com/youtube/v3/channels?part=snippet&id={target_id}&key={YOUTUBE_API_KEY}"
+            async with aiohttp.ClientSession() as session:
+                try:
+                    async with session.get(channel_api_url) as resp:
+                        if resp.status == 200:
+                            ch_data = await resp.json()
+                            ch_items = ch_data.get("items", [])
+                            if ch_items:
+                                channel_title = ch_items[0]["snippet"]["title"]
+                            else:
+                                await ctx.send("❌ 找不到該 YouTube 頻道，請確認 ID 是否正確！")
+                                return
+                except Exception as e:
+                    print(f"查詢 YT 頻道名稱失敗: {e}")
+
         try:
             doc = await asyncio.wait_for(subscriptions_col.find_one({"yt_id": target_id}), timeout=10.0)
         except Exception as e:
@@ -63,12 +84,17 @@ async def subscribe_channel(ctx, platform: str, target_id: str, ig_type: str = "
             return
 
         if doc and dc_id in doc.get("channels", {}):
-            await ctx.send("⚠️ 這個 YouTube 頻道已經在該文字頻道訂閱過了。")
+            await ctx.send(f"⚠️ 頻道 **{channel_title}** 已經在該文字頻道訂閱過了。")
             return
 
-        update_query = {"$set": {f"channels.{dc_id}": {"video": None, "live": None}}}
+        update_query = {
+            "$set": {
+                "yt_title": channel_title,
+                f"channels.{dc_id}": {"video": None, "live": None}
+            }
+        }
         await subscriptions_col.update_one({"yt_id": target_id}, update_query, upsert=True)
-        await ctx.send(f"✅ 成功訂閱 YouTube 頻道 ID: `{target_id}`！")
+        await ctx.send(f"✅ 成功訂閱 YouTube 頻道：**{channel_title}** (`{target_id}`)！")
 
     elif platform == "ig":
         ig_type = ig_type.lower()
@@ -163,7 +189,8 @@ async def list_subscriptions(ctx):
         channels = doc.get("channels", {})
         if dc_id in channels:
             if "yt_id" in doc:
-                yt_list.append(doc["yt_id"])
+                title = doc.get("yt_title", doc["yt_id"])
+                yt_list.append(f"{title} (`{doc['yt_id']}`)")
             elif "ig_id" in doc:
                 config = channels[dc_id]
                 types = config.get("types", ["photo", "video"])
@@ -176,7 +203,7 @@ async def list_subscriptions(ctx):
         
     msg = "📋 **此文字頻道目前的訂閱清單：**\n"
     if yt_list:
-        msg += "\n**▶️ YouTube 頻道：**\n" + "\n".join([f"- `{yt}`" for yt in yt_list])
+        msg += "\n**▶️ YouTube 頻道：**\n" + "\n".join([f"- {yt}" for yt in yt_list])
     if ig_list:
         msg += "\n\n**📸 Instagram 帳號：**\n" + "\n".join([f"- `{ig}`" for ig in ig_list])
         
@@ -195,9 +222,7 @@ async def clear_all_subscriptions(ctx):
             query_key = "yt_id" if "yt_id" in doc else "ig_id"
             target_id = doc[query_key]
             
-            # 移除該文字頻道
             await subscriptions_col.update_one({query_key: target_id}, {"$unset": {f"channels.{dc_id}": ""}})
-            # 如果該訂閱項目已經沒有任何頻道在追蹤，直接刪除整筆文件
             updated_doc = await subscriptions_col.find_one({query_key: target_id})
             if not updated_doc.get("channels"):
                 await subscriptions_col.delete_one({query_key: target_id})
