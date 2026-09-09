@@ -2,17 +2,18 @@ import discord
 from discord.ext import commands, tasks
 import asyncio
 import os
+import random  # 💡 新增：用於產生隨機輪詢間隔
 from aiohttp import web
 import aiohttp
 from motor.motor_asyncio import AsyncIOMotorClient
 import urllib.parse
-from bs4 import BeautifulSoup  # 💡 新增：用於免 API 解析 IG 網頁
+from bs4 import BeautifulSoup
 
 # --- 環境變數 ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 MONGO_URI = os.environ.get("MONGO_URI")
-IG_API_KEY = os.environ.get("IG_API_KEY") # IG 已改為免 API，此變數留空或保留皆不影響
+IG_API_KEY = os.environ.get("IG_API_KEY") # 已改為免 API，保留不影響
 X_API_KEY = os.environ.get("X_API_KEY")
 
 # --- 初始化 Discord Bot ---
@@ -182,20 +183,25 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
             await ctx.send(f"✅ 已更新 {platform.upper()} 帳號 `{target_id}` 的訂閱類型為：**{sub_type}**")
         else:
             if platform == "ig":
-                # 💡 IG 完全改用免 API 鏡像站驗證
-                await ctx.send("🔍 正在驗證 IG 帳號是否存在 (免 API 鏡像模式)，請稍候...")
-                url = f"https://www.picuki.com/profile/{target_id}"
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
+                # 💡 IG 嚴格驗證模式，使用新鏡像站 imginn
+                await ctx.send("🔍 正在驗證 IG 帳號是否存在 (鏡像站模式)，請稍候...")
+                url = f"https://imginn.com/{target_id}/"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                }
                 async with aiohttp.ClientSession() as session:
                     try:
                         async with session.get(url, headers=headers) as response:
                             if response.status == 404:
-                                await ctx.send(f"❌ 找不到該 IG 帳號或帳號無效：`{target_id}`")
+                                await ctx.send(f"❌ 拒絕訂閱：找不到該 IG 帳號 (`{target_id}`)！請確認名稱無誤。")
                                 return
                             elif response.status != 200:
-                                await ctx.send(f"⚠️ 驗證伺服器暫時遇到限制 (HTTP {response.status})，已為您跳過驗證直接訂閱！請確認帳號名稱無誤。")
+                                await ctx.send(f"❌ 拒絕訂閱：驗證伺服器暫時阻擋請求 (HTTP {response.status})。基於嚴格驗證原則，無法為您建立未經確認的訂閱。")
+                                return
                     except Exception as e:
-                        await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}，已為您跳過驗證直接訂閱！")
+                        await ctx.send(f"❌ 拒絕訂閱：驗證過程發生連線錯誤 ({e})。無法確認帳號真偽。")
+                        return
                     
             elif platform == "x":
                 if X_API_KEY:
@@ -210,7 +216,8 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                         try:
                             async with session.get(api_url, headers=headers) as response:
                                 if response.status != 200:
-                                    await ctx.send(f"⚠️ API 暫時遇到速率限制或異常 (HTTP {response.status})，已為您跳過驗證直接訂閱！請確認帳號名稱無誤。")
+                                    await ctx.send(f"❌ 拒絕訂閱：API 暫時遇到速率限制或異常 (HTTP {response.status})，無法驗證帳號真偽。")
+                                    return
                                 else:
                                     result = await response.json()
                                     is_error = False
@@ -228,10 +235,10 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                                             error_msg = "帳號不存在，或是該帳號從未發佈過任何推文，無法驗證。"
                                     
                                     if is_error:
-                                        await ctx.send(f"❌ 找不到該 X (Twitter) 帳號或無效：`{target_id}`\n({error_msg})")
+                                        await ctx.send(f"❌ 拒絕訂閱：找不到該 X 帳號或無效：`{target_id}`\n({error_msg})")
                                         return
                         except Exception as e:
-                            await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}")
+                            await ctx.send(f"❌ 拒絕訂閱：驗證過程發生錯誤: {e}")
                             return
                 else:
                     await ctx.send("⚠️ 尚未設定 X_API_KEY，跳過事前驗證直接訂閱。")
@@ -446,9 +453,9 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢 (💡 完全改寫為免 API 網頁解析，無次數上限)
+# 3. Instagram 監控輪詢 (💡 動態隨機間隔：15~20 分鐘)
 # ==========================================
-@tasks.loop(minutes=15)
+@tasks.loop(minutes=15) # 初始設定為15分鐘，每次跑完後會動態更改下一次的時間
 async def check_ig_updates():
     if subscriptions_col is None: return
     try:
@@ -458,7 +465,8 @@ async def check_ig_updates():
     if not all_ig_subs: return
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
     }
 
     async with aiohttp.ClientSession() as session:
@@ -466,7 +474,8 @@ async def check_ig_updates():
             ig_username = sub_doc["ig_id"]
             dc_channels = sub_doc.get("channels", {})
             
-            url = f"https://www.picuki.com/profile/{ig_username}"
+            # 使用新鏡像站 imginn.com
+            url = f"https://imginn.com/{ig_username}/"
             
             try:
                 async with session.get(url, headers=headers) as response:
@@ -478,47 +487,29 @@ async def check_ig_updates():
                     soup = BeautifulSoup(html, "html.parser")
                     
                     posts_data = []
-                    # 嘗試抓取 Picuki 貼文節點
-                    items = soup.select(".box-photo")
                     
-                    if items:
-                        for item in items[:5]:
-                            a_tag = item.find("a", href=True)
-                            if not a_tag: continue
-                            
-                            href = a_tag["href"]
-                            if href.startswith("/"): href = "https://www.picuki.com" + href
-                            
+                    # Imginn 及通用鏡像解析邏輯 (尋找包含 /p/ 的連結)
+                    for a_tag in soup.find_all("a", href=True):
+                        href = a_tag["href"]
+                        if "/p/" in href or "/post/" in href:
+                            if href.startswith("/"): href = "https://imginn.com" + href
                             post_id = href.rstrip("/").split("/")[-1]
-                            is_video = bool(item.select(".video-icon, .icon-video"))
                             
-                            posts_data.append({
-                                "id": post_id,
-                                "url": href,
-                                "type": "video" if is_video else "photo"
-                            })
-                    else:
-                        # 備用抓取邏輯
-                        for a_tag in soup.find_all("a", href=True):
-                            href = a_tag["href"]
-                            if "/media/" in href:
-                                if href.startswith("/"): href = "https://www.picuki.com" + href
-                                post_id = href.rstrip("/").split("/")[-1]
-                                if post_id and all(p["id"] != post_id for p in posts_data):
-                                    is_video = bool(a_tag.select(".video-icon, .icon-video"))
-                                    posts_data.append({
-                                        "id": post_id,
-                                        "url": href,
-                                        "type": "video" if is_video else "photo"
-                                    })
-                                    if len(posts_data) >= 5:
-                                        break
+                            if post_id and all(p["id"] != post_id for p in posts_data):
+                                # 鏡像站通常不易區分影片或圖片，預設為 general post 處理
+                                is_video = bool(a_tag.select(".video-icon, .icon-video, .play"))
+                                posts_data.append({
+                                    "id": post_id,
+                                    "url": href,
+                                    "type": "video" if is_video else "photo"
+                                })
+                                if len(posts_data) >= 5:
+                                    break
                     
                     if not posts_data:
                         await asyncio.sleep(5)
                         continue
                     
-                    # 💡 反轉順序 (舊到新發送)
                     for post in reversed(posts_data):
                         post_id = post["id"]
                         
@@ -532,7 +523,9 @@ async def check_ig_updates():
                         author_name = ig_username
                         
                         for dc_id, config in dc_channels.items():
-                            if current_type not in config.get("types", ["photo", "video"]):
+                            # 若設定為 all (兩種都收)，則直接放行
+                            allowed_types = config.get("types", ["photo", "video"])
+                            if current_type not in allowed_types and len(allowed_types) < 2:
                                 continue 
                                 
                             dc_channel = bot.get_channel(int(dc_id))
@@ -550,12 +543,16 @@ async def check_ig_updates():
                             final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
                             await dc_channel.send(final_msg)
             except Exception as e:
-                print(f"檢查 IG 帳號 {ig_username} 失敗 (Picuki爬蟲): {e}")
+                print(f"檢查 IG 帳號 {ig_username} 失敗 (鏡像站爬蟲): {e}")
                 
-            await asyncio.sleep(5) # 避開網頁防護機制
+            await asyncio.sleep(5) 
+            
+    # 💡 隨機產生下一次的輪詢時間 (15~20分鐘，即 900~1200 秒)，避免被 Cloudflare 抓規律
+    next_interval = random.randint(15 * 60, 20 * 60)
+    check_ig_updates.change_interval(seconds=next_interval)
 
 # ==========================================
-# 4. X (Twitter) 監控輪詢 (💡 已降頻至每 2 小時一次)
+# 4. X (Twitter) 監控輪詢
 # ==========================================
 @tasks.loop(hours=2)
 async def check_x_updates():
@@ -642,7 +639,7 @@ async def before_x_check():
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using YT & X API, and IG Web Scraping with MongoDB!")
+    return web.Response(text="Discord Bot is alive, using YT & X API, and randomized IG Web Scraping with MongoDB!")
 
 async def start_dummy_server():
     app = web.Application()
