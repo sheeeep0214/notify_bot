@@ -5,6 +5,8 @@ import os
 from aiohttp import web
 import aiohttp
 from motor.motor_asyncio import AsyncIOMotorClient
+import urllib.parse
+import json
 
 # --- 環境變數 ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -13,7 +15,7 @@ MONGO_URI = os.environ.get("MONGO_URI")
 IG_API_KEY = os.environ.get("IG_API_KEY") 
 X_API_KEY = os.environ.get("X_API_KEY")
 
-# --- 💡 輔助函式：深度搜尋 IG 帳號 ID (終結找不到 ID 的惡夢) ---
+# --- 💡 輔助函式：深度搜尋 IG 帳號 ID ---
 def find_ig_cid(obj):
     if isinstance(obj, dict):
         for k in ["cid", "community_id", "id", "pk"]:
@@ -220,14 +222,12 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                                     await ctx.send(f"❌ 拒絕訂閱：查無此 IG 帳號資料 (`{target_id}`)。\n🔍 API 回傳：`{str(result)[:150]}`")
                                     return
                                 
-                                # 💡 使用全新深度搜尋功能抓取 ID
                                 ig_cid = find_ig_cid(result["data"])
                                 
                                 if ig_cid:
                                     await subscriptions_col.update_one({query_key: target_id}, {"$set": {"ig_numeric_id": str(ig_cid)}}, upsert=True)
                                 else:
-                                    # 💡 若還是找不到，直接印出伺服器的 JSON，一翻兩瞪眼
-                                    await ctx.send(f"❌ 拒絕訂閱：無法從伺服器獲取該帳號的有效 ID。\n🔍 伺服器實際回傳內容 (請截圖給開發者)：\n`{str(result)[:300]}`")
+                                    await ctx.send(f"❌ 拒絕訂閱：無法從伺服器獲取該帳號的有效 ID。\n🔍 伺服器回傳內容：\n`{str(result)[:300]}`")
                                     return
 
                         except Exception as e:
@@ -413,6 +413,46 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
     
     status = "預設訊息" if custom_message is None else "專屬訊息"
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
+
+# ==========================================
+# 💡 終極抓蟲指令：模擬背景抓取貼文並輸出 API 原始回覆
+# ==========================================
+@bot.command(name="debug")
+async def debug_api(ctx, platform: str, target_id: str):
+    if platform.lower() != "ig": 
+        await ctx.send("目前僅支援 IG 除錯！")
+        return
+        
+    await ctx.send(f"🔍 正在對 `{target_id}` 執行 API 貼文端點深度除錯...")
+    
+    doc = await subscriptions_col.find_one({"ig_id": target_id})
+    if not doc or not doc.get("ig_numeric_id"):
+        await ctx.send("❌ 資料庫裡沒有這個帳號，或是該帳號當初驗證時沒拿到 numeric ID (cid)。請先執行 `$sub ig 帳號`。")
+        return
+        
+    ig_numeric_id = doc["ig_numeric_id"]
+    posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
+    params = {"cid": ig_numeric_id}
+    headers = {
+        "X-RapidAPI-Key": IG_API_KEY,
+        "X-RapidAPI-Host": "instagram-statistics-api.p.rapidapi.com"
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(posts_url, headers=headers, params=params) as response:
+                status = response.status
+                text = await response.text()
+                
+                # 若內容過長，擷取前後段避免 Discord 發不出去
+                if len(text) > 1800:
+                    text_display = text[:1000] + "\n...[內容過長已截斷]...\n" + text[-800:]
+                else:
+                    text_display = text
+                    
+                await ctx.send(f"**HTTP 狀態碼**: {status}\n**API 原始回傳內容 (部分)**:\n```json\n{text_display}\n```")
+        except Exception as e:
+            await ctx.send(f"❌ 發送請求時發生錯誤：{e}")
 
 # ==========================================
 # 2. YouTube 監控輪詢 
