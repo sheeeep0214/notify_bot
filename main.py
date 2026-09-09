@@ -53,7 +53,7 @@ async def on_command_error(ctx, error):
     print(f"Command Error: {error}")
 
 # ==========================================
-# 1. 統一指令區 (極簡版 Help、YT/IG/X 驗證與訂閱)
+# 1. 統一指令區
 # ==========================================
 @bot.command(name="help")
 async def show_help(ctx):
@@ -196,12 +196,12 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                         try:
                             async with session.post(api_url, headers=headers, data=payload) as response:
                                 if response.status != 200:
-                                    await ctx.send(f"⚠️ 驗證 API 回應異常 (HTTP {response.status})，無法訂閱。")
-                                    return
-                                result = await response.json()
-                                if "error" in result:
-                                    await ctx.send(f"❌ 找不到該 IG 帳號或帳號無效：`{target_id}`\n({result['error']})")
-                                    return
+                                    await ctx.send(f"⚠️ API 暫時遇到速率限制或異常 (HTTP {response.status})，已為您跳過驗證直接訂閱！請確認帳號名稱無誤。")
+                                else:
+                                    result = await response.json()
+                                    if "error" in result:
+                                        await ctx.send(f"❌ 找不到該 IG 帳號或帳號無效：`{target_id}`\n({result['error']})")
+                                        return
                         except Exception as e:
                             await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}")
                             return
@@ -221,30 +221,26 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                         try:
                             async with session.get(api_url, headers=headers) as response:
                                 if response.status != 200:
-                                    await ctx.send(f"⚠️ 驗證 API 回應異常 (HTTP {response.status})，無法訂閱。")
-                                    return
-                                result = await response.json()
-                                
-                                is_error = False
-                                error_msg = "查無此人或無法存取"
-                                
-                                # 狀況 1：API 拋出明確的 error 或 message 字典
-                                if isinstance(result, dict):
-                                    if "error" in result or "message" in result:
+                                    await ctx.send(f"⚠️ API 暫時遇到速率限制或異常 (HTTP {response.status})，已為您跳過驗證直接訂閱！請確認帳號名稱無誤。")
+                                else:
+                                    result = await response.json()
+                                    is_error = False
+                                    error_msg = "查無此人或無法存取"
+                                    
+                                    if isinstance(result, dict):
+                                        if "error" in result or "message" in result:
+                                            is_error = True
+                                            error_msg = result.get("error", result.get("message", "帳號不存在或遭到停權"))
+                                    
+                                    items = result.get("timeline", result) if isinstance(result, dict) else result
+                                    if not isinstance(items, list) or len(items) == 0:
                                         is_error = True
-                                        error_msg = result.get("error", result.get("message", "帳號不存在或遭到停權"))
-                                
-                                # 狀況 2：API 正常運作但抓不到任何推文 (空陣列)
-                                items = result.get("timeline", result) if isinstance(result, dict) else result
-                                if not isinstance(items, list) or len(items) == 0:
-                                    is_error = True
-                                    # 避免覆蓋掉 API 真實的報錯訊息
-                                    if not isinstance(result, dict) or ("error" not in result and "message" not in result):
-                                        error_msg = "帳號不存在，或是該帳號從未發佈過任何推文，無法驗證。"
-                                
-                                if is_error:
-                                    await ctx.send(f"❌ 找不到該 X (Twitter) 帳號或無效：`{target_id}`\n({error_msg})")
-                                    return
+                                        if not isinstance(result, dict) or ("error" not in result and "message" not in result):
+                                            error_msg = "帳號不存在，或是該帳號從未發佈過任何推文，無法驗證。"
+                                    
+                                    if is_error:
+                                        await ctx.send(f"❌ 找不到該 X (Twitter) 帳號或無效：`{target_id}`\n({error_msg})")
+                                        return
                         except Exception as e:
                             await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}")
                             return
@@ -409,7 +405,9 @@ async def check_youtube_updates():
             
             try:
                 async with session.get(api_url) as response:
-                    if response.status != 200: continue
+                    if response.status != 200: 
+                        await asyncio.sleep(2) # 延遲防暴衝
+                        continue
                     data = await response.json()
                     items = data.get("items", [])
                     if not items: continue
@@ -455,6 +453,9 @@ async def check_youtube_updates():
                                 await dc_channel.send(final_msg)
             except Exception as e:
                 print(f"檢查 YT 失敗: {e}")
+                
+            # 💡 在每次迴圈結束後強制休息 2 秒，避免瞬間觸發 API 封鎖
+            await asyncio.sleep(2)
 
 # ==========================================
 # 3. Instagram 監控輪詢
@@ -485,7 +486,9 @@ async def check_ig_updates():
             
             try:
                 async with session.post(api_url, headers=headers, data=payload) as response:
-                    if response.status != 200: continue
+                    if response.status != 200: 
+                        await asyncio.sleep(3) # 延遲防暴衝
+                        continue
                     result = await response.json()
                     
                     items = result.get("data", result.get("items", result))
@@ -535,6 +538,9 @@ async def check_ig_updates():
                             await dc_channel.send(final_msg)
             except Exception as e:
                 print(f"檢查 IG 帳號 {ig_username} 失敗: {e}")
+                
+            # 💡 每檢查完一個 IG 帳號，強制休息 3 秒，避免瞬間觸發 429 速率封鎖
+            await asyncio.sleep(3)
 
 # ==========================================
 # 4. X (Twitter) 監控輪詢
@@ -562,7 +568,9 @@ async def check_x_updates():
             
             try:
                 async with session.get(api_url, headers=headers) as response:
-                    if response.status != 200: continue
+                    if response.status != 200: 
+                        await asyncio.sleep(3) # 延遲防暴衝
+                        continue
                     result = await response.json()
                     
                     items = result.get("timeline", result) if isinstance(result, dict) else result
@@ -603,6 +611,9 @@ async def check_x_updates():
                             await dc_channel.send(final_msg)
             except Exception as e:
                 print(f"檢查 X 帳號 {x_username} 失敗: {e}")
+                
+            # 💡 每檢查完一個 X 帳號，強制休息 3 秒，避免瞬間觸發 429 速率封鎖
+            await asyncio.sleep(3)
 
 @check_youtube_updates.before_loop
 async def before_check():
