@@ -406,7 +406,7 @@ async def check_youtube_updates():
             try:
                 async with session.get(api_url) as response:
                     if response.status != 200: 
-                        await asyncio.sleep(2) # 延遲防暴衝
+                        await asyncio.sleep(2) 
                         continue
                     data = await response.json()
                     items = data.get("items", [])
@@ -454,7 +454,6 @@ async def check_youtube_updates():
             except Exception as e:
                 print(f"檢查 YT 失敗: {e}")
                 
-            # 💡 在每次迴圈結束後強制休息 2 秒，避免瞬間觸發 API 封鎖
             await asyncio.sleep(2)
 
 # ==========================================
@@ -487,7 +486,7 @@ async def check_ig_updates():
             try:
                 async with session.post(api_url, headers=headers, data=payload) as response:
                     if response.status != 200: 
-                        await asyncio.sleep(3) # 延遲防暴衝
+                        await asyncio.sleep(3) 
                         continue
                     result = await response.json()
                     
@@ -539,7 +538,6 @@ async def check_ig_updates():
             except Exception as e:
                 print(f"檢查 IG 帳號 {ig_username} 失敗: {e}")
                 
-            # 💡 每檢查完一個 IG 帳號，強制休息 3 秒，避免瞬間觸發 429 速率封鎖
             await asyncio.sleep(3)
 
 # ==========================================
@@ -569,7 +567,7 @@ async def check_x_updates():
             try:
                 async with session.get(api_url, headers=headers) as response:
                     if response.status != 200: 
-                        await asyncio.sleep(3) # 延遲防暴衝
+                        await asyncio.sleep(3) 
                         continue
                     result = await response.json()
                     
@@ -612,7 +610,6 @@ async def check_x_updates():
             except Exception as e:
                 print(f"檢查 X 帳號 {x_username} 失敗: {e}")
                 
-            # 💡 每檢查完一個 X 帳號，強制休息 3 秒，避免瞬間觸發 429 速率封鎖
             await asyncio.sleep(3)
 
 @check_youtube_updates.before_loop
