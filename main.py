@@ -623,9 +623,9 @@ async def check_ig_updates():
                         post_url = item.get("postUrl", f"https://www.instagram.com/{ig_username}/")
                         author_name = item.get("name", ig_username)
                         
-                        # 💡 核心替換：將 instagram.com 替換為 ddinstagram.com 以產生 Discord 預覽
+                        # 💡 核心替換：改用最新穩定運作的 oginstagram.com 產生預覽
                         if "instagram.com" in post_url:
-                            post_url = post_url.replace("instagram.com", "ddinstagram.com")
+                            post_url = post_url.replace("instagram.com", "oginstagram.com")
                         
                         for dc_id, config in dc_channels.items():
                             if current_type not in config.get("types", ["photo", "video"]):
@@ -739,7 +739,7 @@ async def before_x_check():
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using YT, X API (every 12h), and IG Statistics API (every 24h) with MongoDB!")
+    return web.Response(text="Discord Bot is alive, using YT, X API, and IG Statistics API (oginstagram embed) with MongoDB!")
 
 async def start_dummy_server():
     app = web.Application()
