@@ -17,7 +17,6 @@ X_API_KEY = os.environ.get("X_API_KEY")
 # --- 初始化 Discord Bot ---
 intents = discord.Intents.default()
 intents.message_content = True 
-# 關閉預設 help，使用我們自訂的高級版圖文 help
 bot = commands.Bot(command_prefix="$", intents=intents, help_command=None)
 
 # --- 資料庫變數 ---
@@ -54,65 +53,63 @@ async def on_command_error(ctx, error):
     print(f"Command Error: {error}")
 
 # ==========================================
-# 1. 統一指令區 (全新排版 Help、YT/IG/X 驗證與訂閱)
+# 1. 統一指令區 (極簡版 Help、YT/IG/X 驗證與訂閱)
 # ==========================================
 @bot.command(name="help")
 async def show_help(ctx):
     embed = discord.Embed(
-        title="🤖 社群推播機器人 | 指令操作手冊",
-        description="歡迎使用！本機器人的指令前綴皆為 `$`。\n目前支援即時監控：**YouTube (`yt`)**、**Instagram (`ig`)**、**X / Twitter (`x`)**",
-        color=0x2b2d31 # Discord 深色主題配色
+        title="社群推播機器人 指令手冊",
+        description="指令前綴為 `$`, 支援 YouTube (`yt`), Instagram (`ig`), X (`x`)",
+        color=0x2b2d31 
     )
 
     embed.add_field(
-        name="📌 1. 新增訂閱 (`$sub`)",
+        name="1. 新增訂閱",
         value=(
-            "```\n$sub <平台> <帳號或ID> [接收類型]\n```"
-            "🔹 **YouTube**：無需類型。\n"
-            "└ 範例：`$sub yt UCIU8ha-NHmLjtUwU7dFiXUA`\n\n"
-            "🔹 **Instagram**：類型可選 `all`, `photo`, `video`\n"
-            "└ 範例：`$sub ig nmixx_official video`\n\n"
-            "🔹 **X (Twitter)**：類型可選 `all`, `post`, `video`\n"
-            "└ 範例：`$sub x nmixx_official all`"
+            "**格式：** `$sub <平台> <帳號或ID> [接收類型]`\n\n"
+            "**YouTube** (無接收類型)\n"
+            "▶ `$sub yt UCIU8ha-NHmLjtUwU7dFiXUA`\n\n"
+            "**Instagram** (可選: `all`, `photo`, `video`)\n"
+            "▶ `$sub ig nmixx_official video`\n\n"
+            "**X / Twitter** (可選: `all`, `post`, `video`)\n"
+            "▶ `$sub x nmixx_official all`"
         ),
         inline=False
     )
 
     embed.add_field(
-        name="🗑️ 2. 移除訂閱 (`$unsub`)",
+        name="2. 移除訂閱",
         value=(
-            "```\n$unsub <平台> <帳號或ID>\n```"
-            "└ 範例：`$unsub ig nmixx_official`\n"
-            "└ 範例：`$unsub yt UCIU8ha-NHmL...`"
+            "**格式：** `$unsub <平台> <帳號或ID>`\n"
+            "▶ `$unsub ig nmixx_official`"
         ),
         inline=False
     )
 
     embed.add_field(
-        name="💬 3. 自訂專屬推播文字 (`$msg`)",
+        name="3. 自訂推播訊息",
         value=(
-            "```\n$msg <平台> <帳號或ID> <推播類型> [文字]\n```"
-            "各平台支援的推播類型：\n"
-            "• `yt` ➔ `video`, `live`\n"
-            "• `ig` ➔ `photo`, `video`\n"
-            "• `x`  ➔ `post`, `video`\n\n"
-            "💡 **可用變數**：`{author}`, `{title}`(限YT), `{link}`\n"
-            "└ 範例：`$msg yt UC... video 🔔 {author} 發新片啦 {link}`\n"
-            "*(註：不填後方文字則恢復預設訊息)*"
+            "**格式：** `$msg <平台> <帳號或ID> <推播類型> [自訂文字]`\n\n"
+            "**支援類型：**\n"
+            "• yt: `video`, `live`\n"
+            "• ig: `photo`, `video`\n"
+            "• x: `post`, `video`\n\n"
+            "**可用變數：** `{author}`, `{title}`(限YT), `{link}`\n"
+            "▶ `$msg yt UCIU... video 🔔 {author} 發新片啦 {link}`\n"
+            "*(不填後方文字即可恢復預設)*"
         ),
         inline=False
     )
 
     embed.add_field(
-        name="📋 4. 頻道訂閱管理",
+        name="4. 訂閱清單管理",
         value=(
-            "• **`$list`** ➔ 列表查看目前頻道的所有訂閱\n"
-            "• **`$clear`** ➔ 一鍵清空目前頻道的所有訂閱紀錄"
+            "• **查看清單：** `$list`\n"
+            "• **清除全部：** `$clear`"
         ),
         inline=False
     )
     
-    embed.set_footer(text="提示：自訂文字支援使用 @everyone 等標記功能喔！")
     await ctx.send(embed=embed)
 
 @bot.command(name="sub")
@@ -183,7 +180,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
             )
             await ctx.send(f"✅ 已更新 {platform.upper()} 帳號 `{target_id}` 的訂閱類型為：**{sub_type}**")
         else:
-            # 🌟 IG 事前驗證
             if platform == "ig":
                 if IG_API_KEY:
                     await ctx.send("🔍 正在驗證 IG 帳號是否存在，請稍候...")
@@ -212,7 +208,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                 else:
                     await ctx.send("⚠️ 尚未設定 IG_API_KEY，跳過事前驗證直接訂閱。")
                     
-            # 🌟 X (Twitter) 事前驗證
             elif platform == "x":
                 if X_API_KEY:
                     await ctx.send("🔍 正在驗證 X (Twitter) 帳號是否存在，請稍候...")
@@ -230,18 +225,25 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                                     return
                                 result = await response.json()
                                 
-                                # 解析 API 回傳資料，若出現 error 或是非預期格式就阻擋
                                 is_error = False
                                 error_msg = "查無此人或無法存取"
+                                
+                                # 狀況 1：API 拋出明確的 error 或 message 字典
                                 if isinstance(result, dict):
-                                    if "error" in result:
+                                    if "error" in result or "message" in result:
                                         is_error = True
-                                        error_msg = result["error"]
-                                    elif not result.get("timeline") and len(result) < 3:
-                                        is_error = True
+                                        error_msg = result.get("error", result.get("message", "帳號不存在或遭到停權"))
+                                
+                                # 狀況 2：API 正常運作但抓不到任何推文 (空陣列)
+                                items = result.get("timeline", result) if isinstance(result, dict) else result
+                                if not isinstance(items, list) or len(items) == 0:
+                                    is_error = True
+                                    # 避免覆蓋掉 API 真實的報錯訊息
+                                    if not isinstance(result, dict) or ("error" not in result and "message" not in result):
+                                        error_msg = "帳號不存在，或是該帳號從未發佈過任何推文，無法驗證。"
                                 
                                 if is_error:
-                                    await ctx.send(f"❌ 找不到該 X (Twitter) 帳號或帳號無效：`{target_id}`\n({error_msg})")
+                                    await ctx.send(f"❌ 找不到該 X (Twitter) 帳號或無效：`{target_id}`\n({error_msg})")
                                     return
                         except Exception as e:
                             await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}")
@@ -479,29 +481,38 @@ async def check_ig_updates():
             }
             
             ig_url = f"https://www.instagram.com/{ig_username}/"
-            payload = urllib.parse.urlencode({'username_or_url': ig_url, 'amount': 3})
+            payload = urllib.parse.urlencode({'username_or_url': ig_url, 'amount': 5})
             
             try:
                 async with session.post(api_url, headers=headers, data=payload) as response:
                     if response.status != 200: continue
                     result = await response.json()
                     
-                    items = result.get("data", [])
-                    if not items: continue
+                    items = result.get("data", result.get("items", result))
+                    if not isinstance(items, list) or not items: continue
                     
-                    for item in reversed(items): 
-                        node = item.get("node", {})
-                        post_id = node.get("id")
+                    for item in reversed(items[:5]): 
+                        node = item.get("node", item) if isinstance(item, dict) else item
                         
-                        if not post_id or await history_col.find_one({"ig_post_id": post_id}):
+                        post_id = node.get("id") or node.get("pk")
+                        if not post_id: continue
+                        
+                        if await history_col.find_one({"ig_post_id": post_id}):
                             continue
                             
                         await history_col.insert_one({"ig_post_id": post_id})
                         
                         media_type = node.get("media_type")
-                        current_type = "video" if media_type == 2 else "photo"
+                        is_video = node.get("is_video", False)
+                        if isinstance(media_type, int):
+                            current_type = "video" if media_type == 2 else "photo"
+                        elif isinstance(media_type, str):
+                            current_type = "video" if "video" in media_type.lower() else "photo"
+                        else:
+                            current_type = "video" if is_video else "photo"
                         
-                        post_url = f"https://www.instagram.com/p/{node.get('code')}/"
+                        code = node.get("code") or node.get("shortcode")
+                        post_url = f"https://www.instagram.com/p/{code}/" if code else f"https://www.instagram.com/{ig_username}/"
                         author_name = ig_username
                         
                         for dc_id, config in dc_channels.items():
