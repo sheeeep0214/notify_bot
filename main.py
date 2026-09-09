@@ -5,6 +5,7 @@ import os
 from aiohttp import web
 import aiohttp
 from motor.motor_asyncio import AsyncIOMotorClient
+import urllib.parse
 
 # --- 環境變數 ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -182,10 +183,12 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
             if platform == "ig":
                 if IG_API_KEY:
                     await ctx.send("🔍 正在驗證 IG 帳號是否存在，請稍候...")
-                    api_url = f"https://instagram-best-experience.p.rapidapi.com/user_info?username={target_id}"
+                    # 💡 切換為 Instagram Statistics API 驗證端點
+                    ig_url_encoded = urllib.parse.quote(f"https://www.instagram.com/{target_id}/")
+                    api_url = f"https://instagram-statistics-api.p.rapidapi.com/community?url={ig_url_encoded}"
                     headers = {
                         "X-RapidAPI-Key": IG_API_KEY,
-                        "X-RapidAPI-Host": "instagram-best-experience.p.rapidapi.com"
+                        "X-RapidAPI-Host": "instagram-statistics-api.p.rapidapi.com"
                     }
                     async with aiohttp.ClientSession() as session:
                         try:
@@ -198,13 +201,14 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                                     return
                                 
                                 result = await response.json()
-                                if result.get("status") == "fail" or "data" not in result:
+                                # 根據 Instagram Statistics API 回傳格式檢查
+                                if "data" not in result or not result["data"]:
                                     await ctx.send(f"❌ 拒絕訂閱：查無此 IG 帳號資料 (`{target_id}`)。")
                                     return
                                 
-                                ig_numeric_id = result["data"].get("id")
-                                if ig_numeric_id:
-                                    await subscriptions_col.update_one({query_key: target_id}, {"$set": {"ig_numeric_id": str(ig_numeric_id)}}, upsert=True)
+                                ig_cid = result["data"].get("id")
+                                if ig_cid:
+                                    await subscriptions_col.update_one({query_key: target_id}, {"$set": {"ig_numeric_id": str(ig_cid)}}, upsert=True)
                                 else:
                                     await ctx.send(f"❌ 拒絕訂閱：無法從伺服器獲取該帳號的有效 ID。")
                                     return
@@ -469,7 +473,7 @@ async def check_youtube_updates():
 # ==========================================
 # 3. Instagram 監控輪詢
 # ==========================================
-@tasks.loop(hours=2) 
+@tasks.loop(hours=24) # 💡 IG 的輪詢頻率已更改為一天一次 (24 小時)
 async def check_ig_updates():
     if not IG_API_KEY or subscriptions_col is None: return
     try:
@@ -480,7 +484,7 @@ async def check_ig_updates():
 
     headers = {
         "X-RapidAPI-Key": IG_API_KEY,
-        "X-RapidAPI-Host": "instagram-best-experience.p.rapidapi.com"
+        "X-RapidAPI-Host": "instagram-statistics-api.p.rapidapi.com"
     }
 
     async with aiohttp.ClientSession() as session:
@@ -491,11 +495,12 @@ async def check_ig_updates():
             
             if not ig_numeric_id:
                 try:
-                    user_url = f"https://instagram-best-experience.p.rapidapi.com/user_info?username={ig_username}"
+                    ig_url_encoded = urllib.parse.quote(f"https://www.instagram.com/{ig_username}/")
+                    user_url = f"https://instagram-statistics-api.p.rapidapi.com/community?url={ig_url_encoded}"
                     async with session.get(user_url, headers=headers) as u_resp:
                         if u_resp.status == 200:
                             u_data = await u_resp.json()
-                            if u_data.get("status") != "fail" and "data" in u_data:
+                            if "data" in u_data and u_data["data"]:
                                 ig_numeric_id = str(u_data["data"]["id"])
                                 await subscriptions_col.update_one({"ig_id": ig_username}, {"$set": {"ig_numeric_id": ig_numeric_id}})
                 except Exception as e:
@@ -505,7 +510,8 @@ async def check_ig_updates():
             
             if not ig_numeric_id: continue
 
-            posts_url = f"https://instagram-best-experience.p.rapidapi.com/user_medias?user_id={ig_numeric_id}"
+            # 💡 使用 Instagram Statistics API 的 posts 端點
+            posts_url = f"https://instagram-statistics-api.p.rapidapi.com/posts?cid={ig_numeric_id}"
             
             try:
                 async with session.get(posts_url, headers=headers) as response:
@@ -518,7 +524,7 @@ async def check_ig_updates():
                     if not items: continue
                     
                     for item in reversed(items[:5]): 
-                        post_id = item.get("id") or item.get("pk")
+                        post_id = item.get("id") or item.get("shortcode")
                         if not post_id: continue
                         
                         if await history_col.find_one({"ig_post_id": post_id}):
@@ -526,14 +532,14 @@ async def check_ig_updates():
                             
                         await history_col.insert_one({"ig_post_id": post_id})
                         
-                        media_type = item.get("media_type")
-                        if media_type == 2:
+                        media_type = item.get("type")
+                        if media_type == "Video" or media_type == "Reel":
                             current_type = "video"
                         else:
                             current_type = "photo"
                         
-                        code = item.get("code")
-                        post_url = f"https://www.instagram.com/p/{code}/" if code else f"https://www.instagram.com/{ig_username}/"
+                        code = item.get("shortcode")
+                        post_url = f"https://www.instagram.com/p/{code}/" if code else item.get("url", f"https://www.instagram.com/{ig_username}/")
                         author_name = ig_username
                         
                         for dc_id, config in dc_channels.items():
@@ -555,14 +561,14 @@ async def check_ig_updates():
                             final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
                             await dc_channel.send(final_msg)
             except Exception as e:
-                print(f"檢查 IG 帳號 {ig_username} 失敗 (Best Experience API): {e}")
+                print(f"檢查 IG 帳號 {ig_username} 失敗 (Statistics API): {e}")
                 
             await asyncio.sleep(3)
 
 # ==========================================
 # 4. X (Twitter) 監控輪詢
 # ==========================================
-@tasks.loop(hours=12) # 💡 X 的輪詢頻率已更改為 12 小時一次
+@tasks.loop(hours=12) 
 async def check_x_updates():
     if not X_API_KEY or subscriptions_col is None: return
     try:
@@ -647,7 +653,7 @@ async def before_x_check():
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using YT, X API (every 12h), and strictly verified IG API with MongoDB!")
+    return web.Response(text="Discord Bot is alive, using YT, X API (every 12h), and IG Statistics API (every 24h) with MongoDB!")
 
 async def start_dummy_server():
     app = web.Application()
