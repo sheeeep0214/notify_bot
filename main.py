@@ -5,6 +5,7 @@ import os
 from aiohttp import web
 import aiohttp
 from motor.motor_asyncio import AsyncIOMotorClient
+import urllib.parse
 
 # --- 環境變數 ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -16,7 +17,7 @@ X_API_KEY = os.environ.get("X_API_KEY")
 # --- 初始化 Discord Bot ---
 intents = discord.Intents.default()
 intents.message_content = True 
-# 關閉預設 help，使用我們自訂的圖文版 help
+# 關閉預設 help，使用我們自訂的高級版圖文 help
 bot = commands.Bot(command_prefix="$", intents=intents, help_command=None)
 
 # --- 資料庫變數 ---
@@ -53,63 +54,65 @@ async def on_command_error(ctx, error):
     print(f"Command Error: {error}")
 
 # ==========================================
-# 1. 統一指令區 (支援 YT, IG, X 訂閱、管理與說明)
+# 1. 統一指令區 (全新排版 Help、YT/IG/X 驗證與訂閱)
 # ==========================================
 @bot.command(name="help")
 async def show_help(ctx):
     embed = discord.Embed(
-        title="📖 社群推播機器人 指令手冊",
-        description="本機器人支援 **YouTube (yt)**、**Instagram (ig)** 與 **X/Twitter (x)** 的即時更新監控！\n指令前綴皆為 `$`。",
-        color=discord.Color.blue()
+        title="🤖 社群推播機器人 | 指令操作手冊",
+        description="歡迎使用！本機器人的指令前綴皆為 `$`。\n目前支援即時監控：**YouTube (`yt`)**、**Instagram (`ig`)**、**X / Twitter (`x`)**",
+        color=0x2b2d31 # Discord 深色主題配色
     )
 
     embed.add_field(
-        name="📥 1. 訂閱帳號 `$sub`",
+        name="📌 1. 新增訂閱 (`$sub`)",
         value=(
-            "• **YouTube**：`$sub yt <頻道ID>`\n"
-            "  範例：`$sub yt UCIU8ha-NHmLjtUwU7dFiXUA`\n"
-            "• **Instagram**：`$sub ig <帳號> [類型]`\n"
-            "  類型可選：`all` (預設)、`photo` (相片/相簿)、`video` (Reels/影片)\n"
-            "  範例：`$sub ig nmixx_official photo`\n"
-            "• **X (Twitter)**：`$sub x <帳號> [類型]`\n"
-            "  類型可選：`all` (預設)、`post` (純文字/相片)、`video` (內含影片)\n"
-            "  範例：`$sub x nmixx_official video`"
+            "```\n$sub <平台> <帳號或ID> [接收類型]\n```"
+            "🔹 **YouTube**：無需類型。\n"
+            "└ 範例：`$sub yt UCIU8ha-NHmLjtUwU7dFiXUA`\n\n"
+            "🔹 **Instagram**：類型可選 `all`, `photo`, `video`\n"
+            "└ 範例：`$sub ig nmixx_official video`\n\n"
+            "🔹 **X (Twitter)**：類型可選 `all`, `post`, `video`\n"
+            "└ 範例：`$sub x nmixx_official all`"
         ),
         inline=False
     )
 
     embed.add_field(
-        name="📤 2. 取消訂閱 `$unsub`",
+        name="🗑️ 2. 移除訂閱 (`$unsub`)",
         value=(
-            "`$unsub <平台> <帳號/ID>`\n"
-            "範例：`$unsub ig nmixx_official` 或 `$unsub yt UCIU8ha-...`"
+            "```\n$unsub <平台> <帳號或ID>\n```"
+            "└ 範例：`$unsub ig nmixx_official`\n"
+            "└ 範例：`$unsub yt UCIU8ha-NHmL...`"
         ),
         inline=False
     )
 
     embed.add_field(
-        name="📋 3. 檢視與清理清單",
+        name="💬 3. 自訂專屬推播文字 (`$msg`)",
         value=(
-            "• **查看目前頻道訂閱**：`$list`\n"
-            "• **清除此頻道所有訂閱**：`$clear`"
+            "```\n$msg <平台> <帳號或ID> <推播類型> [文字]\n```"
+            "各平台支援的推播類型：\n"
+            "• `yt` ➔ `video`, `live`\n"
+            "• `ig` ➔ `photo`, `video`\n"
+            "• `x`  ➔ `post`, `video`\n\n"
+            "💡 **可用變數**：`{author}`, `{title}`(限YT), `{link}`\n"
+            "└ 範例：`$msg yt UC... video 🔔 {author} 發新片啦 {link}`\n"
+            "*(註：不填後方文字則恢復預設訊息)*"
         ),
         inline=False
     )
 
     embed.add_field(
-        name="💬 4. 設定專屬推播訊息 `$msg`",
+        name="📋 4. 頻道訂閱管理",
         value=(
-            "`$msg <平台> <帳號/ID> <類型> [自訂文字]`\n"
-            "• **YT 類型**：`video`、`live`\n"
-            "• **IG 類型**：`photo`、`video`\n"
-            "• **X 類型**：`post`、`video`\n"
-            "*(註：後方不填寫文字則恢復為預設訊息)*\n"
-            "**可用變數**：`{author}` (作者)、`{title}` (標題，限YT)、`{link}` (連結)"
+            "• **`$list`** ➔ 列表查看目前頻道的所有訂閱\n"
+            "• **`$clear`** ➔ 一鍵清空目前頻道的所有訂閱紀錄"
         ),
         inline=False
     )
-
-    embed.set_footer(text="提示：支援 @everyone、@here 或 <@&身分組ID> 標記提醒！")
+    
+    embed.set_footer(text="提示：自訂文字支援使用 @everyone 等標記功能喔！")
     await ctx.send(embed=embed)
 
 @bot.command(name="sub")
@@ -180,6 +183,7 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
             )
             await ctx.send(f"✅ 已更新 {platform.upper()} 帳號 `{target_id}` 的訂閱類型為：**{sub_type}**")
         else:
+            # 🌟 IG 事前驗證
             if platform == "ig":
                 if IG_API_KEY:
                     await ctx.send("🔍 正在驗證 IG 帳號是否存在，請稍候...")
@@ -189,7 +193,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                         "X-RapidAPI-Host": "instagram-scraper-stable-api.p.rapidapi.com",
                         "Content-Type": "application/x-www-form-urlencoded"
                     }
-                    import urllib.parse
                     ig_url = f"https://www.instagram.com/{target_id}/"
                     payload = urllib.parse.urlencode({'username_or_url': ig_url, 'amount': 1})
                     
@@ -209,8 +212,42 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                 else:
                     await ctx.send("⚠️ 尚未設定 IG_API_KEY，跳過事前驗證直接訂閱。")
                     
+            # 🌟 X (Twitter) 事前驗證
             elif platform == "x":
-                pass 
+                if X_API_KEY:
+                    await ctx.send("🔍 正在驗證 X (Twitter) 帳號是否存在，請稍候...")
+                    api_url = f"https://twitter-api45.p.rapidapi.com/timeline.php?screenname={target_id}"
+                    headers = {
+                        "X-RapidAPI-Key": X_API_KEY,
+                        "X-RapidAPI-Host": "twitter-api45.p.rapidapi.com",
+                        "Content-Type": "application/json"
+                    }
+                    async with aiohttp.ClientSession() as session:
+                        try:
+                            async with session.get(api_url, headers=headers) as response:
+                                if response.status != 200:
+                                    await ctx.send(f"⚠️ 驗證 API 回應異常 (HTTP {response.status})，無法訂閱。")
+                                    return
+                                result = await response.json()
+                                
+                                # 解析 API 回傳資料，若出現 error 或是非預期格式就阻擋
+                                is_error = False
+                                error_msg = "查無此人或無法存取"
+                                if isinstance(result, dict):
+                                    if "error" in result:
+                                        is_error = True
+                                        error_msg = result["error"]
+                                    elif not result.get("timeline") and len(result) < 3:
+                                        is_error = True
+                                
+                                if is_error:
+                                    await ctx.send(f"❌ 找不到該 X (Twitter) 帳號或帳號無效：`{target_id}`\n({error_msg})")
+                                    return
+                        except Exception as e:
+                            await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}")
+                            return
+                else:
+                    await ctx.send("⚠️ 尚未設定 X_API_KEY，跳過事前驗證直接訂閱。")
 
             db_types_init = {"photo": None, "video": None} if platform == "ig" else {"post": None, "video": None}
             update_query = {
@@ -441,7 +478,6 @@ async def check_ig_updates():
                 "Content-Type": "application/x-www-form-urlencoded"
             }
             
-            import urllib.parse
             ig_url = f"https://www.instagram.com/{ig_username}/"
             payload = urllib.parse.urlencode({'username_or_url': ig_url, 'amount': 3})
             
@@ -490,7 +526,7 @@ async def check_ig_updates():
                 print(f"檢查 IG 帳號 {ig_username} 失敗: {e}")
 
 # ==========================================
-# 4. X (Twitter) 監控輪詢 (使用 twitter-api45)
+# 4. X (Twitter) 監控輪詢
 # ==========================================
 @tasks.loop(minutes=15)
 async def check_x_updates():
