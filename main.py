@@ -433,7 +433,6 @@ async def debug_api(ctx, platform: str, target_id: str):
     ig_numeric_id = doc["ig_numeric_id"]
     posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
     
-    # 💡 新增必填日期參數 (抓取過去 30 天)
     end_date = datetime.now().strftime("%d.%m.%Y")
     start_date = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
     
@@ -456,7 +455,6 @@ async def debug_api(ctx, platform: str, target_id: str):
                 status = response.status
                 text = await response.text()
                 
-                # 若內容過長，擷取前後段避免 Discord 發不出去
                 if len(text) > 1800:
                     text_display = text[:1000] + "\n...[內容過長已截斷]...\n" + text[-800:]
                 else:
@@ -584,7 +582,6 @@ async def check_ig_updates():
 
             posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
             
-            # 💡 新增必填日期參數 (抓取過去 30 天)
             end_date = datetime.now().strftime("%d.%m.%Y")
             start_date = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
             
@@ -603,11 +600,13 @@ async def check_ig_updates():
                         continue
                     result = await response.json()
                     
-                    items = result.get("data", {}).get("items", []) if isinstance(result.get("data"), dict) else result.get("data", [])
+                    # 💡 完全修正：對應真實的資料結構
+                    items = result.get("data", {}).get("posts", [])
                     if not items: continue
                     
                     for item in reversed(items[:5]): 
-                        post_id = item.get("id") or item.get("shortcode")
+                        # 💡 欄位名稱對齊
+                        post_id = item.get("postID")
                         if not post_id: continue
                         
                         if await history_col.find_one({"ig_post_id": post_id}):
@@ -615,15 +614,16 @@ async def check_ig_updates():
                             
                         await history_col.insert_one({"ig_post_id": post_id})
                         
-                        media_type = item.get("type")
-                        if media_type in ["Video", "Reel"]:
+                        # 💡 媒體類型對齊
+                        media_type = item.get("type", "").upper()
+                        if media_type in ["REELS", "VIDEO"]:
                             current_type = "video"
                         else:
                             current_type = "photo"
                         
-                        code = item.get("shortcode")
-                        post_url = f"https://www.instagram.com/p/{code}/" if code else item.get("url", f"https://www.instagram.com/{ig_username}/")
-                        author_name = ig_username
+                        # 💡 網址對齊
+                        post_url = item.get("postUrl", f"https://www.instagram.com/{ig_username}/")
+                        author_name = item.get("name", ig_username)
                         
                         for dc_id, config in dc_channels.items():
                             if current_type not in config.get("types", ["photo", "video"]):
