@@ -219,7 +219,7 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                                 
                                 result = await response.json()
                                 if "data" not in result or not result["data"]:
-                                    await ctx.send(f"❌ 拒絕訂閱：查無此 IG 帳號資料 (`{target_id}`)。\n🔍 API 回傳：`{str(result)[:150]}`")
+                                    await ctx.send(f"❌ 拒絕訂閱：查無此 IG 帳號資料 (`{target_id}`)。")
                                     return
                                 
                                 ig_cid = find_ig_cid(result["data"])
@@ -227,7 +227,7 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                                 if ig_cid:
                                     await subscriptions_col.update_one({query_key: target_id}, {"$set": {"ig_numeric_id": str(ig_cid)}}, upsert=True)
                                 else:
-                                    await ctx.send(f"❌ 拒絕訂閱：無法從伺服器獲取該帳號的有效 ID。\n🔍 伺服器回傳內容：\n`{str(result)[:300]}`")
+                                    await ctx.send(f"❌ 拒絕訂閱：無法從伺服器獲取該帳號的有效 ID。")
                                     return
 
                         except Exception as e:
@@ -600,12 +600,14 @@ async def check_ig_updates():
                         continue
                     result = await response.json()
                     
-                    # 💡 完全修正：對應真實的資料結構
                     items = result.get("data", {}).get("posts", [])
                     if not items: continue
                     
+                    # 💡 終極解法：強制依據時間降序排序（最新到最舊）
+                    # 即使 API 給的資料排錯順序，我們自己重新排一次！
+                    items = sorted(items, key=lambda x: x.get("date", ""), reverse=True)
+                    
                     for item in reversed(items[:5]): 
-                        # 💡 欄位名稱對齊
                         post_id = item.get("postID")
                         if not post_id: continue
                         
@@ -614,14 +616,12 @@ async def check_ig_updates():
                             
                         await history_col.insert_one({"ig_post_id": post_id})
                         
-                        # 💡 媒體類型對齊
                         media_type = item.get("type", "").upper()
                         if media_type in ["REELS", "VIDEO"]:
                             current_type = "video"
                         else:
                             current_type = "photo"
                         
-                        # 💡 網址對齊
                         post_url = item.get("postUrl", f"https://www.instagram.com/{ig_username}/")
                         author_name = item.get("name", ig_username)
                         
