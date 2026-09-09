@@ -2,17 +2,15 @@ import discord
 from discord.ext import commands, tasks
 import asyncio
 import os
-import random 
 from aiohttp import web
 import aiohttp
 from motor.motor_asyncio import AsyncIOMotorClient
-import urllib.parse
 
 # --- 環境變數 ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 MONGO_URI = os.environ.get("MONGO_URI")
-IG_API_KEY = os.environ.get("IG_API_KEY") # 確保 Render 上的 IG_API_KEY 是你最新的 Key
+IG_API_KEY = os.environ.get("IG_API_KEY") 
 X_API_KEY = os.environ.get("X_API_KEY")
 
 # --- 初始化 Discord Bot ---
@@ -184,7 +182,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
             if platform == "ig":
                 if IG_API_KEY:
                     await ctx.send("🔍 正在驗證 IG 帳號是否存在，請稍候...")
-                    # 💡 更新為 Instagram Best Experience API 驗證 Username 端點
                     api_url = f"https://instagram-best-experience.p.rapidapi.com/user_info?username={target_id}"
                     headers = {
                         "X-RapidAPI-Key": IG_API_KEY,
@@ -193,24 +190,32 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                     async with aiohttp.ClientSession() as session:
                         try:
                             async with session.get(api_url, headers=headers) as response:
-                                if response.status != 200:
-                                    await ctx.send(f"⚠️ API 暫時遇到速率限制或異常 (HTTP {response.status})，已為您跳過驗證直接訂閱！請確認帳號名稱無誤。")
+                                # 💡 嚴格處理 HTTP 狀態碼，絕不放行無效帳號
+                                if response.status == 404:
+                                    await ctx.send(f"❌ 拒絕訂閱：找不到該 IG 帳號 (`{target_id}`)！請確認名稱無誤。")
+                                    return
+                                elif response.status != 200:
+                                    await ctx.send(f"❌ 拒絕訂閱：驗證伺服器發生異常 (HTTP {response.status})。無法確認帳號真偽，已取消訂閱。")
+                                    return
+                                
+                                result = await response.json()
+                                if result.get("status") == "fail" or "data" not in result:
+                                    await ctx.send(f"❌ 拒絕訂閱：查無此 IG 帳號資料 (`{target_id}`)。")
+                                    return
+                                
+                                ig_numeric_id = result["data"].get("id")
+                                if ig_numeric_id:
+                                    await subscriptions_col.update_one({query_key: target_id}, {"$set": {"ig_numeric_id": str(ig_numeric_id)}}, upsert=True)
                                 else:
-                                    result = await response.json()
-                                    if result.get("status") == "fail" or "data" not in result:
-                                         await ctx.send(f"❌ 找不到該 IG 帳號或無效：`{target_id}`")
-                                         return
-                                    
-                                    # 如果查得到，可以順便抓 user_id 存起來，方便後續抓貼文
-                                    ig_numeric_id = result["data"].get("id")
-                                    if ig_numeric_id:
-                                        await subscriptions_col.update_one({query_key: target_id}, {"$set": {"ig_numeric_id": str(ig_numeric_id)}}, upsert=True)
-                                        
+                                    await ctx.send(f"❌ 拒絕訂閱：無法從伺服器獲取該帳號的有效 ID。")
+                                    return
+
                         except Exception as e:
-                            await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}")
+                            await ctx.send(f"❌ 拒絕訂閱：驗證過程發生錯誤 ({e})。")
                             return
                 else:
-                    await ctx.send("⚠️ 尚未設定 IG_API_KEY，跳過事前驗證直接訂閱。")
+                    await ctx.send("⚠️ 尚未設定 IG_API_KEY，無法進行驗證，拒絕訂閱。")
+                    return
                     
             elif platform == "x":
                 if X_API_KEY:
@@ -224,32 +229,35 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                     async with aiohttp.ClientSession() as session:
                         try:
                             async with session.get(api_url, headers=headers) as response:
+                                # 💡 X 平台同樣嚴格阻擋
                                 if response.status != 200:
-                                    await ctx.send(f"⚠️ API 暫時遇到速率限制或異常 (HTTP {response.status})，已為您跳過驗證直接訂閱！請確認帳號名稱無誤。")
-                                else:
-                                    result = await response.json()
-                                    is_error = False
-                                    error_msg = "查無此人或無法存取"
-                                    
-                                    if isinstance(result, dict):
-                                        if "error" in result or "message" in result:
-                                            is_error = True
-                                            error_msg = result.get("error", result.get("message", "帳號不存在或遭到停權"))
-                                    
-                                    items = result.get("timeline", result) if isinstance(result, dict) else result
-                                    if not isinstance(items, list) or len(items) == 0:
+                                    await ctx.send(f"❌ 拒絕訂閱：API 暫時遇到速率限制或異常 (HTTP {response.status})，無法驗證帳號真偽。")
+                                    return
+                                
+                                result = await response.json()
+                                is_error = False
+                                error_msg = "查無此人或無法存取"
+                                
+                                if isinstance(result, dict):
+                                    if "error" in result or "message" in result:
                                         is_error = True
-                                        if not isinstance(result, dict) or ("error" not in result and "message" not in result):
-                                            error_msg = "帳號不存在，或是該帳號從未發佈過任何推文，無法驗證。"
-                                    
-                                    if is_error:
-                                        await ctx.send(f"❌ 找不到該 X (Twitter) 帳號或無效：`{target_id}`\n({error_msg})")
-                                        return
+                                        error_msg = result.get("error", result.get("message", "帳號不存在或遭到停權"))
+                                
+                                items = result.get("timeline", result) if isinstance(result, dict) else result
+                                if not isinstance(items, list) or len(items) == 0:
+                                    is_error = True
+                                    if not isinstance(result, dict) or ("error" not in result and "message" not in result):
+                                        error_msg = "帳號不存在，或是該帳號從未發佈過任何推文，無法驗證。"
+                                
+                                if is_error:
+                                    await ctx.send(f"❌ 拒絕訂閱：找不到該 X 帳號或無效：`{target_id}`\n({error_msg})")
+                                    return
                         except Exception as e:
-                            await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}")
+                            await ctx.send(f"❌ 拒絕訂閱：驗證過程發生連線錯誤 ({e})。")
                             return
                 else:
-                    await ctx.send("⚠️ 尚未設定 X_API_KEY，跳過事前驗證直接訂閱。")
+                    await ctx.send("⚠️ 尚未設定 X_API_KEY，無法進行驗證，拒絕訂閱。")
+                    return
 
             db_types_init = {"photo": None, "video": None} if platform == "ig" else {"post": None, "video": None}
             update_query = {
@@ -461,9 +469,9 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢 (💡 使用 Instagram Best Experience API)
+# 3. Instagram 監控輪詢
 # ==========================================
-@tasks.loop(hours=2) # 💡 目前暫定每 2 小時一次
+@tasks.loop(hours=2) 
 async def check_ig_updates():
     if not IG_API_KEY or subscriptions_col is None: return
     try:
@@ -483,7 +491,6 @@ async def check_ig_updates():
             ig_numeric_id = sub_doc.get("ig_numeric_id")
             dc_channels = sub_doc.get("channels", {})
             
-            # 若資料庫沒有儲存數字 ID，則需呼叫一次 user_info API 抓取
             if not ig_numeric_id:
                 try:
                     user_url = f"https://instagram-best-experience.p.rapidapi.com/user_info?username={ig_username}"
@@ -500,7 +507,6 @@ async def check_ig_updates():
             
             if not ig_numeric_id: continue
 
-            # 使用 User_id 抓取貼文列表
             posts_url = f"https://instagram-best-experience.p.rapidapi.com/user_medias?user_id={ig_numeric_id}"
             
             try:
@@ -643,7 +649,7 @@ async def before_x_check():
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using YT, X API, and Instagram Best Experience API with MongoDB!")
+    return web.Response(text="Discord Bot is alive, using YT, X API, and strictly verified IG API with MongoDB!")
 
 async def start_dummy_server():
     app = web.Application()
