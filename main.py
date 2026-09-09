@@ -6,12 +6,13 @@ from aiohttp import web
 import aiohttp
 from motor.motor_asyncio import AsyncIOMotorClient
 import urllib.parse
+from bs4 import BeautifulSoup  # 💡 新增：用於免 API 解析 IG 網頁
 
 # --- 環境變數 ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 MONGO_URI = os.environ.get("MONGO_URI")
-IG_API_KEY = os.environ.get("IG_API_KEY")
+IG_API_KEY = os.environ.get("IG_API_KEY") # IG 已改為免 API，此變數留空或保留皆不影響
 X_API_KEY = os.environ.get("X_API_KEY")
 
 # --- 初始化 Discord Bot ---
@@ -181,32 +182,20 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
             await ctx.send(f"✅ 已更新 {platform.upper()} 帳號 `{target_id}` 的訂閱類型為：**{sub_type}**")
         else:
             if platform == "ig":
-                if IG_API_KEY:
-                    await ctx.send("🔍 正在驗證 IG 帳號是否存在，請稍候...")
-                    api_url = "https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_posts.php"
-                    headers = {
-                        "X-RapidAPI-Key": IG_API_KEY,
-                        "X-RapidAPI-Host": "instagram-scraper-stable-api.p.rapidapi.com",
-                        "Content-Type": "application/x-www-form-urlencoded"
-                    }
-                    ig_url = f"https://www.instagram.com/{target_id}/"
-                    payload = urllib.parse.urlencode({'username_or_url': ig_url, 'amount': 1})
-                    
-                    async with aiohttp.ClientSession() as session:
-                        try:
-                            async with session.post(api_url, headers=headers, data=payload) as response:
-                                if response.status != 200:
-                                    await ctx.send(f"⚠️ API 暫時遇到速率限制或異常 (HTTP {response.status})，已為您跳過驗證直接訂閱！請確認帳號名稱無誤。")
-                                else:
-                                    result = await response.json()
-                                    if "error" in result:
-                                        await ctx.send(f"❌ 找不到該 IG 帳號或帳號無效：`{target_id}`\n({result['error']})")
-                                        return
-                        except Exception as e:
-                            await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}")
-                            return
-                else:
-                    await ctx.send("⚠️ 尚未設定 IG_API_KEY，跳過事前驗證直接訂閱。")
+                # 💡 IG 完全改用免 API 鏡像站驗證
+                await ctx.send("🔍 正在驗證 IG 帳號是否存在 (免 API 鏡像模式)，請稍候...")
+                url = f"https://www.picuki.com/profile/{target_id}"
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
+                async with aiohttp.ClientSession() as session:
+                    try:
+                        async with session.get(url, headers=headers) as response:
+                            if response.status == 404:
+                                await ctx.send(f"❌ 找不到該 IG 帳號或帳號無效：`{target_id}`")
+                                return
+                            elif response.status != 200:
+                                await ctx.send(f"⚠️ 驗證伺服器暫時遇到限制 (HTTP {response.status})，已為您跳過驗證直接訂閱！請確認帳號名稱無誤。")
+                    except Exception as e:
+                        await ctx.send(f"⚠️ 驗證過程發生錯誤: {e}，已為您跳過驗證直接訂閱！")
                     
             elif platform == "x":
                 if X_API_KEY:
@@ -457,64 +446,89 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢
+# 3. Instagram 監控輪詢 (💡 完全改寫為免 API 網頁解析，無次數上限)
 # ==========================================
 @tasks.loop(minutes=15)
 async def check_ig_updates():
-    if not IG_API_KEY or subscriptions_col is None: return
+    if subscriptions_col is None: return
     try:
         cursor = subscriptions_col.find({"ig_id": {"$exists": True}})
         all_ig_subs = await cursor.to_list(length=None)
     except Exception: return 
     if not all_ig_subs: return
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     async with aiohttp.ClientSession() as session:
         for sub_doc in all_ig_subs:
             ig_username = sub_doc["ig_id"]
             dc_channels = sub_doc.get("channels", {})
             
-            api_url = "https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_posts.php"
-            headers = {
-                "X-RapidAPI-Key": IG_API_KEY,
-                "X-RapidAPI-Host": "instagram-scraper-stable-api.p.rapidapi.com",
-                "Content-Type": "application/x-www-form-urlencoded"
-            }
-            
-            ig_url = f"https://www.instagram.com/{ig_username}/"
-            payload = urllib.parse.urlencode({'username_or_url': ig_url, 'amount': 5})
+            url = f"https://www.picuki.com/profile/{ig_username}"
             
             try:
-                async with session.post(api_url, headers=headers, data=payload) as response:
+                async with session.get(url, headers=headers) as response:
                     if response.status != 200: 
-                        await asyncio.sleep(3) 
+                        await asyncio.sleep(5) 
                         continue
-                    result = await response.json()
-                    
-                    items = result.get("data", result.get("items", result))
-                    if not isinstance(items, list) or not items: continue
-                    
-                    for item in reversed(items[:5]): 
-                        node = item.get("node", item) if isinstance(item, dict) else item
                         
-                        post_id = node.get("id") or node.get("pk")
-                        if not post_id: continue
+                    html = await response.text()
+                    soup = BeautifulSoup(html, "html.parser")
+                    
+                    posts_data = []
+                    # 嘗試抓取 Picuki 貼文節點
+                    items = soup.select(".box-photo")
+                    
+                    if items:
+                        for item in items[:5]:
+                            a_tag = item.find("a", href=True)
+                            if not a_tag: continue
+                            
+                            href = a_tag["href"]
+                            if href.startswith("/"): href = "https://www.picuki.com" + href
+                            
+                            post_id = href.rstrip("/").split("/")[-1]
+                            is_video = bool(item.select(".video-icon, .icon-video"))
+                            
+                            posts_data.append({
+                                "id": post_id,
+                                "url": href,
+                                "type": "video" if is_video else "photo"
+                            })
+                    else:
+                        # 備用抓取邏輯
+                        for a_tag in soup.find_all("a", href=True):
+                            href = a_tag["href"]
+                            if "/media/" in href:
+                                if href.startswith("/"): href = "https://www.picuki.com" + href
+                                post_id = href.rstrip("/").split("/")[-1]
+                                if post_id and all(p["id"] != post_id for p in posts_data):
+                                    is_video = bool(a_tag.select(".video-icon, .icon-video"))
+                                    posts_data.append({
+                                        "id": post_id,
+                                        "url": href,
+                                        "type": "video" if is_video else "photo"
+                                    })
+                                    if len(posts_data) >= 5:
+                                        break
+                    
+                    if not posts_data:
+                        await asyncio.sleep(5)
+                        continue
+                    
+                    # 💡 反轉順序 (舊到新發送)
+                    for post in reversed(posts_data):
+                        post_id = post["id"]
                         
                         if await history_col.find_one({"ig_post_id": post_id}):
                             continue
                             
                         await history_col.insert_one({"ig_post_id": post_id})
                         
-                        media_type = node.get("media_type")
-                        is_video = node.get("is_video", False)
-                        if isinstance(media_type, int):
-                            current_type = "video" if media_type == 2 else "photo"
-                        elif isinstance(media_type, str):
-                            current_type = "video" if "video" in media_type.lower() else "photo"
-                        else:
-                            current_type = "video" if is_video else "photo"
-                        
-                        code = node.get("code") or node.get("shortcode")
-                        post_url = f"https://www.instagram.com/p/{code}/" if code else f"https://www.instagram.com/{ig_username}/"
+                        current_type = post["type"]
+                        post_url = post["url"]
                         author_name = ig_username
                         
                         for dc_id, config in dc_channels.items():
@@ -536,14 +550,14 @@ async def check_ig_updates():
                             final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
                             await dc_channel.send(final_msg)
             except Exception as e:
-                print(f"檢查 IG 帳號 {ig_username} 失敗: {e}")
+                print(f"檢查 IG 帳號 {ig_username} 失敗 (Picuki爬蟲): {e}")
                 
-            await asyncio.sleep(3)
+            await asyncio.sleep(5) # 避開網頁防護機制
 
 # ==========================================
-# 4. X (Twitter) 監控輪詢
+# 4. X (Twitter) 監控輪詢 (💡 已降頻至每 2 小時一次)
 # ==========================================
-@tasks.loop(minutes=15)
+@tasks.loop(hours=2)
 async def check_x_updates():
     if not X_API_KEY or subscriptions_col is None: return
     try:
@@ -628,7 +642,7 @@ async def before_x_check():
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using YT, IG & X API with MongoDB!")
+    return web.Response(text="Discord Bot is alive, using YT & X API, and IG Web Scraping with MongoDB!")
 
 async def start_dummy_server():
     app = web.Application()
