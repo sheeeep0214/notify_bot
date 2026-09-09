@@ -6,7 +6,7 @@ from aiohttp import web
 import aiohttp
 from motor.motor_asyncio import AsyncIOMotorClient
 import urllib.parse
-import json
+from datetime import datetime, timedelta
 
 # --- 環境變數 ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -432,7 +432,19 @@ async def debug_api(ctx, platform: str, target_id: str):
         
     ig_numeric_id = doc["ig_numeric_id"]
     posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
-    params = {"cid": ig_numeric_id}
+    
+    # 💡 新增必填日期參數 (抓取過去 30 天)
+    end_date = datetime.now().strftime("%d.%m.%Y")
+    start_date = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
+    
+    params = {
+        "cid": ig_numeric_id,
+        "from": start_date,
+        "to": end_date,
+        "type": "posts",
+        "sort": "date"
+    }
+    
     headers = {
         "X-RapidAPI-Key": IG_API_KEY,
         "X-RapidAPI-Host": "instagram-statistics-api.p.rapidapi.com"
@@ -571,7 +583,18 @@ async def check_ig_updates():
             if not ig_numeric_id: continue
 
             posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
-            params = {"cid": ig_numeric_id}
+            
+            # 💡 新增必填日期參數 (抓取過去 30 天)
+            end_date = datetime.now().strftime("%d.%m.%Y")
+            start_date = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
+            
+            params = {
+                "cid": ig_numeric_id,
+                "from": start_date,
+                "to": end_date,
+                "type": "posts",
+                "sort": "date"
+            }
             
             try:
                 async with session.get(posts_url, headers=headers, params=params) as response:
