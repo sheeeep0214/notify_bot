@@ -190,7 +190,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                     async with aiohttp.ClientSession() as session:
                         try:
                             async with session.get(api_url, headers=headers) as response:
-                                # 💡 嚴格處理 HTTP 狀態碼，絕不放行無效帳號
                                 if response.status == 404:
                                     await ctx.send(f"❌ 拒絕訂閱：找不到該 IG 帳號 (`{target_id}`)！請確認名稱無誤。")
                                     return
@@ -229,7 +228,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                     async with aiohttp.ClientSession() as session:
                         try:
                             async with session.get(api_url, headers=headers) as response:
-                                # 💡 X 平台同樣嚴格阻擋
                                 if response.status != 200:
                                     await ctx.send(f"❌ 拒絕訂閱：API 暫時遇到速率限制或異常 (HTTP {response.status})，無法驗證帳號真偽。")
                                     return
@@ -564,7 +562,7 @@ async def check_ig_updates():
 # ==========================================
 # 4. X (Twitter) 監控輪詢
 # ==========================================
-@tasks.loop(hours=2)
+@tasks.loop(hours=12) # 💡 X 的輪詢頻率已更改為 12 小時一次
 async def check_x_updates():
     if not X_API_KEY or subscriptions_col is None: return
     try:
@@ -649,7 +647,7 @@ async def before_x_check():
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using YT, X API, and strictly verified IG API with MongoDB!")
+    return web.Response(text="Discord Bot is alive, using YT, X API (every 12h), and strictly verified IG API with MongoDB!")
 
 async def start_dummy_server():
     app = web.Application()
