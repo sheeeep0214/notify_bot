@@ -603,8 +603,6 @@ async def check_ig_updates():
                     items = result.get("data", {}).get("posts", [])
                     if not items: continue
                     
-                    # 💡 終極解法：強制依據時間降序排序（最新到最舊）
-                    # 即使 API 給的資料排錯順序，我們自己重新排一次！
                     items = sorted(items, key=lambda x: x.get("date", ""), reverse=True)
                     
                     for item in reversed(items[:5]): 
@@ -624,6 +622,10 @@ async def check_ig_updates():
                         
                         post_url = item.get("postUrl", f"https://www.instagram.com/{ig_username}/")
                         author_name = item.get("name", ig_username)
+                        
+                        # 💡 核心替換：將 instagram.com 替換為 ddinstagram.com 以產生 Discord 預覽
+                        if "instagram.com" in post_url:
+                            post_url = post_url.replace("instagram.com", "ddinstagram.com")
                         
                         for dc_id, config in dc_channels.items():
                             if current_type not in config.get("types", ["photo", "video"]):
