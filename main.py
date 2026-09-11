@@ -615,7 +615,7 @@ async def check_ig_updates():
                         await history_col.insert_one({"ig_post_id": post_id})
                         
                         media_type = item.get("type", "").upper()
-                        if media_type in ["REELS", "VIDEO"]:
+                        if "REEL" in media_type or "VIDEO" in media_type:
                             current_type = "video"
                         else:
                             current_type = "photo"
@@ -623,7 +623,6 @@ async def check_ig_updates():
                         post_url = item.get("postUrl", f"https://www.instagram.com/{ig_username}/")
                         author_name = item.get("name", ig_username)
                         
-                        # 💡 核心替換：改用最新穩定運作的 oginstagram.com 產生預覽
                         if "instagram.com" in post_url:
                             post_url = post_url.replace("instagram.com", "oginstagram.com")
                         
@@ -639,7 +638,7 @@ async def check_ig_updates():
                                 if current_type == "video":
                                     template = "🎬 **{author}** 發布了新影片/Reels！\n{link}"
                                 else:
-                                    template = "📷 **{author}** 發布了新照片貼文！\n{link}"
+                                    template = "📷 **{author}** 發布了新貼文！\n{link}"
                             else:
                                 template = custom_msg
                                 
@@ -653,7 +652,8 @@ async def check_ig_updates():
 # ==========================================
 # 4. X (Twitter) 監控輪詢
 # ==========================================
-@tasks.loop(hours=12) 
+# 💡 已將 X 的輪詢頻率改為 6 小時
+@tasks.loop(hours=6) 
 async def check_x_updates():
     if not X_API_KEY or subscriptions_col is None: return
     try:
@@ -739,7 +739,8 @@ async def before_x_check():
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using YT, X API, and IG Statistics API (oginstagram embed) with MongoDB!")
+    # 💡 這裡也配合修改為 6h
+    return web.Response(text="Discord Bot is alive, using YT, X API (every 6h), and IG Statistics API (oginstagram embed) with MongoDB!")
 
 async def start_dummy_server():
     app = web.Application()
