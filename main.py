@@ -434,15 +434,14 @@ async def debug_api(ctx, platform: str, target_id: str):
     posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
     
     end_date = datetime.now().strftime("%d.%m.%Y")
-    # 💡 終極解法：縮小為過去 2 天，保證資料量不會超出 API 的分頁上限
-    start_date = (datetime.now() - timedelta(days=2)).strftime("%d.%m.%Y")
+    start_date = (datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y")
     
     params = {
         "cid": ig_numeric_id,
         "from": start_date,
         "to": end_date,
         "type": "posts",
-        "sort": "date" 
+        "sort": "date"
     }
     
     headers = {
@@ -584,8 +583,7 @@ async def check_ig_updates():
             posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
             
             end_date = datetime.now().strftime("%d.%m.%Y")
-            # 💡 終極解法：強制縮小範圍到 2 天，避開 API 截斷問題
-            start_date = (datetime.now() - timedelta(days=2)).strftime("%d.%m.%Y")
+            start_date = (datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y")
             
             params = {
                 "cid": ig_numeric_id,
@@ -605,10 +603,12 @@ async def check_ig_updates():
                     items = result.get("data", {}).get("posts", [])
                     if not items: continue
                     
-                    # 💡 保險機制：在程式內部再次由新到舊排序
+                    # 💡 核心修復：強制將 API 給的資料依照日期「由新到舊」排序 (reverse=True)
+                    # 這樣索引 [0] 就絕對是最新的一篇貼文！
                     items = sorted(items, key=lambda x: x.get("date", ""), reverse=True)
                     
-                    for item in reversed(items[:5]): 
+                    # 💡 直接從最前面（最新）開始取前 5 筆
+                    for item in items[:5]: 
                         post_id = item.get("postID")
                         if not post_id: continue
                         
