@@ -434,7 +434,8 @@ async def debug_api(ctx, platform: str, target_id: str):
     posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
     
     end_date = datetime.now().strftime("%d.%m.%Y")
-    start_date = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
+    # 💡 修改：將抓取範圍擴大為過去 365 天，避免因太久沒發文導致漏抓最新貼文
+    start_date = (datetime.now() - timedelta(days=365)).strftime("%d.%m.%Y")
     
     params = {
         "cid": ig_numeric_id,
@@ -583,7 +584,8 @@ async def check_ig_updates():
             posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
             
             end_date = datetime.now().strftime("%d.%m.%Y")
-            start_date = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
+            # 💡 修改：將抓取範圍擴大為過去 365 天
+            start_date = (datetime.now() - timedelta(days=365)).strftime("%d.%m.%Y")
             
             params = {
                 "cid": ig_numeric_id,
@@ -652,7 +654,6 @@ async def check_ig_updates():
 # ==========================================
 # 4. X (Twitter) 監控輪詢
 # ==========================================
-# 💡 已將 X 的輪詢頻率改為 6 小時
 @tasks.loop(hours=6) 
 async def check_x_updates():
     if not X_API_KEY or subscriptions_col is None: return
@@ -739,7 +740,6 @@ async def before_x_check():
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    # 💡 這裡也配合修改為 6h
     return web.Response(text="Discord Bot is alive, using YT, X API (every 6h), and IG Statistics API (oginstagram embed) with MongoDB!")
 
 async def start_dummy_server():
