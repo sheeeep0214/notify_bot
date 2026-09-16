@@ -434,8 +434,8 @@ async def debug_api(ctx, platform: str, target_id: str):
     posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
     
     end_date = datetime.now().strftime("%d.%m.%Y")
-    # 💡 縮小範圍為 7 天，並重新加回 sort=date，保證能拿到最新且不過載
-    start_date = (datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y")
+    # 💡 終極解法：縮小為過去 2 天，保證資料量不會超出 API 的分頁上限
+    start_date = (datetime.now() - timedelta(days=2)).strftime("%d.%m.%Y")
     
     params = {
         "cid": ig_numeric_id,
@@ -584,8 +584,8 @@ async def check_ig_updates():
             posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
             
             end_date = datetime.now().strftime("%d.%m.%Y")
-            # 💡 完美解法：7 天範圍 + sort=date + 後續 Python 反轉排序
-            start_date = (datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y")
+            # 💡 終極解法：強制縮小範圍到 2 天，避開 API 截斷問題
+            start_date = (datetime.now() - timedelta(days=2)).strftime("%d.%m.%Y")
             
             params = {
                 "cid": ig_numeric_id,
@@ -605,7 +605,7 @@ async def check_ig_updates():
                     items = result.get("data", {}).get("posts", [])
                     if not items: continue
                     
-                    # 💡 因為 API 是從舊排到新，所以我們在這裡反轉，保證拿到「最新一秒」的
+                    # 💡 保險機制：在程式內部再次由新到舊排序
                     items = sorted(items, key=lambda x: x.get("date", ""), reverse=True)
                     
                     for item in reversed(items[:5]): 
