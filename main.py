@@ -434,14 +434,15 @@ async def debug_api(ctx, platform: str, target_id: str):
     posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
     
     end_date = datetime.now().strftime("%d.%m.%Y")
-    start_date = (datetime.now() - timedelta(days=365)).strftime("%d.%m.%Y")
+    # 💡 縮小範圍為 7 天，並重新加回 sort=date，保證能拿到最新且不過載
+    start_date = (datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y")
     
-    # 💡 移除致命的 "sort": "date" 參數，讓 API 自己回傳最新的資料
     params = {
         "cid": ig_numeric_id,
         "from": start_date,
         "to": end_date,
-        "type": "posts"
+        "type": "posts",
+        "sort": "date" 
     }
     
     headers = {
@@ -583,14 +584,15 @@ async def check_ig_updates():
             posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
             
             end_date = datetime.now().strftime("%d.%m.%Y")
-            start_date = (datetime.now() - timedelta(days=365)).strftime("%d.%m.%Y")
+            # 💡 完美解法：7 天範圍 + sort=date + 後續 Python 反轉排序
+            start_date = (datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y")
             
-            # 💡 移除致命的 "sort": "date" 參數
             params = {
                 "cid": ig_numeric_id,
                 "from": start_date,
                 "to": end_date,
-                "type": "posts"
+                "type": "posts",
+                "sort": "date"
             }
             
             try:
@@ -603,7 +605,7 @@ async def check_ig_updates():
                     items = result.get("data", {}).get("posts", [])
                     if not items: continue
                     
-                    # 再由我們程式端強制重新排序一次確保萬無一失
+                    # 💡 因為 API 是從舊排到新，所以我們在這裡反轉，保證拿到「最新一秒」的
                     items = sorted(items, key=lambda x: x.get("date", ""), reverse=True)
                     
                     for item in reversed(items[:5]): 
