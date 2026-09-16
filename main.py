@@ -34,7 +34,7 @@ def get_next_ig_headers():
     return {
         "X-RapidAPI-Key": current_key,
         "X-RapidAPI-Host": IG_API_HOST,
-        "Content-Type": "application/json"
+        "Content-Type": "application/x-www-form-urlencoded"
     }
 
 # --- 初始化 Discord Bot ---
@@ -389,7 +389,7 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
 # ==========================================
-# 💡 終極抓蟲指令：模擬背景抓取貼文並輸出 API 原始回傳 (使用 params)
+# 💡 終極抓蟲指令：模擬背景抓取貼文並輸出 API 原始回傳 (使用 Form Data)
 # ==========================================
 @bot.command(name="debug")
 async def debug_api(ctx, platform: str, target_id: str):
@@ -397,17 +397,17 @@ async def debug_api(ctx, platform: str, target_id: str):
         await ctx.send("目前僅支援 IG 除錯！")
         return
         
-    await ctx.send(f"🔍 正在對 `{target_id}` 透過 .php 端點執行深度除錯...")
+    await ctx.send(f"🔍 正在對 `{target_id}` 透過 Form Data .php 端點執行深度除錯...")
     
     posts_url = f"https://{IG_API_HOST}/get_ig_user_posts.php"
-    params = {"username": target_id}
+    form_data = {"username": target_id}
     
     async with aiohttp.ClientSession() as session:
         try:
             success = False
             for _ in range(len(IG_API_KEYS)):
                 headers = get_next_ig_headers()
-                async with session.post(posts_url, headers=headers, params=params) as response:
+                async with session.post(posts_url, headers=headers, data=form_data) as response:
                     status = response.status
                     text = await response.text()
                     if status in [429, 403]:
@@ -501,7 +501,7 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢 (使用 params 傳遞 username)
+# 3. Instagram 監控輪詢 (使用 Form Data 傳遞 username)
 # ==========================================
 @tasks.loop(hours=24) 
 async def check_ig_updates():
@@ -518,13 +518,13 @@ async def check_ig_updates():
         for sub_doc in all_ig_subs:
             ig_username = sub_doc["ig_id"]
             dc_channels = sub_doc.get("channels", {})
-            params = {"username": ig_username}
+            form_data = {"username": ig_username}
             
             success = False
             for _ in range(len(IG_API_KEYS)):
                 headers = get_next_ig_headers()
                 try:
-                    async with session.post(posts_url, headers=headers, params=params) as response:
+                    async with session.post(posts_url, headers=headers, data=form_data) as response:
                         if response.status in [429, 403]:
                             continue 
                         if response.status != 200:
@@ -673,7 +673,7 @@ async def before_x_check():
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using YT, X API, and Instagram Scraper Stable API with params username!")
+    return web.Response(text="Discord Bot is alive, using YT, X API, and Instagram Scraper Stable API with Form Data!")
 
 async def start_dummy_server():
     app = web.Application()
