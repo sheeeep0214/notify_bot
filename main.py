@@ -434,15 +434,14 @@ async def debug_api(ctx, platform: str, target_id: str):
     posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
     
     end_date = datetime.now().strftime("%d.%m.%Y")
-    # 💡 修改：將抓取範圍擴大為過去 365 天，避免因太久沒發文導致漏抓最新貼文
     start_date = (datetime.now() - timedelta(days=365)).strftime("%d.%m.%Y")
     
+    # 💡 移除致命的 "sort": "date" 參數，讓 API 自己回傳最新的資料
     params = {
         "cid": ig_numeric_id,
         "from": start_date,
         "to": end_date,
-        "type": "posts",
-        "sort": "date"
+        "type": "posts"
     }
     
     headers = {
@@ -584,15 +583,14 @@ async def check_ig_updates():
             posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
             
             end_date = datetime.now().strftime("%d.%m.%Y")
-            # 💡 修改：將抓取範圍擴大為過去 365 天
             start_date = (datetime.now() - timedelta(days=365)).strftime("%d.%m.%Y")
             
+            # 💡 移除致命的 "sort": "date" 參數
             params = {
                 "cid": ig_numeric_id,
                 "from": start_date,
                 "to": end_date,
-                "type": "posts",
-                "sort": "date"
+                "type": "posts"
             }
             
             try:
@@ -605,6 +603,7 @@ async def check_ig_updates():
                     items = result.get("data", {}).get("posts", [])
                     if not items: continue
                     
+                    # 再由我們程式端強制重新排序一次確保萬無一失
                     items = sorted(items, key=lambda x: x.get("date", ""), reverse=True)
                     
                     for item in reversed(items[:5]): 
