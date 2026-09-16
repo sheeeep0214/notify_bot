@@ -16,9 +16,9 @@ X_API_KEY = os.environ.get("X_API_KEY")
 
 # --- 💡 建立 Instagram Scraper Stable API 的 3 組 Key 輪替清單 ---
 IG_API_KEYS = [
-    os.environ.get("IG_API_KEY"),         # 原本的 Key
-    "96316f14bemsha9dbd31b963a0f1p1e485cjsn74ad7b2934ea",  # 第二組
-    "a4556b492bmsh04ece71a6a44c90p1e6ad2jsn7aaaa51cc32c"   # 第三組
+    os.environ.get("IG_API_KEY"),
+    "96316f14bemsha9dbd31b963a0f1p1e485cjsn74ad7b2934ea",
+    "a4556b492bmsh04ece71a6a44c90p1e6ad2jsn7aaaa51cc32c"
 ]
 IG_API_KEYS = [k for k in IG_API_KEYS if k]
 ig_key_index = 0
@@ -389,7 +389,7 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
 # ==========================================
-# 💡 終極抓蟲指令：模擬背景抓取貼文並輸出 API 原始回覆 (POST 請求)
+# 💡 終極抓蟲指令：模擬背景抓取貼文並輸出 API 原始回覆 (正確的 .php 端點)
 # ==========================================
 @bot.command(name="debug")
 async def debug_api(ctx, platform: str, target_id: str):
@@ -397,9 +397,9 @@ async def debug_api(ctx, platform: str, target_id: str):
         await ctx.send("目前僅支援 IG 除錯！")
         return
         
-    await ctx.send(f"🔍 正在對 `{target_id}` 透過 User Posts API 執行深度除錯...")
+    await ctx.send(f"🔍 正在對 `{target_id}` 透過正確的 Scraper API 執行深度除錯...")
     
-    posts_url = f"https://{IG_API_HOST}/v1/posts"
+    posts_url = f"https://{IG_API_HOST}/get_ig_user_posts.php"
     payload = {"username": target_id}
     
     async with aiohttp.ClientSession() as session:
@@ -501,7 +501,7 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢 (使用 User Posts POST 端點 + 3組 Key 輪替)
+# 3. Instagram 監控輪詢 (使用正確的 .php 端點 + 3組 Key 輪替)
 # ==========================================
 @tasks.loop(hours=24) 
 async def check_ig_updates():
@@ -512,7 +512,7 @@ async def check_ig_updates():
     except Exception: return 
     if not all_ig_subs: return
 
-    posts_url = f"https://{IG_API_HOST}/v1/posts"
+    posts_url = f"https://{IG_API_HOST}/get_ig_user_posts.php"
 
     async with aiohttp.ClientSession() as session:
         for sub_doc in all_ig_subs:
@@ -531,13 +531,11 @@ async def check_ig_updates():
                             break
                             
                         result = await response.json()
-                        # 對應 User Posts 的回傳結構 (posts 陣列包在 data 裡或根目錄)
                         items = result.get("data", {}).get("posts", result.get("posts", []))
                         success = True
                         
                         if not items: break
                         
-                        # 抽出 node 結構並反轉處理
                         for item in reversed(items[:5]): 
                             node = item.get("node", item)
                             post_id = node.get("id", node.get("pk", node.get("code")))
@@ -675,7 +673,7 @@ async def before_x_check():
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using YT, X API, and Instagram Scraper Stable API (User Posts POST endpoint) with MongoDB!")
+    return web.Response(text="Discord Bot is alive, using YT, X API, and Instagram Scraper Stable API (get_ig_user_posts.php) with MongoDB!")
 
 async def start_dummy_server():
     app = web.Application()
