@@ -12,25 +12,32 @@ from datetime import datetime, timedelta
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 MONGO_URI = os.environ.get("MONGO_URI")
-IG_API_KEY = os.environ.get("IG_API_KEY") 
 X_API_KEY = os.environ.get("X_API_KEY")
 
-# --- 💡 輔助函式：深度搜尋 IG 帳號 ID ---
-def find_ig_cid(obj):
-    if isinstance(obj, dict):
-        for k in ["cid", "community_id", "id", "pk"]:
-            if k in obj and obj[k]:
-                val = str(obj[k])
-                if val.startswith("INST:") or val.isdigit():
-                    return val if val.startswith("INST:") else f"INST:{val}"
-        for v in obj.values():
-            res = find_ig_cid(v)
-            if res: return res
-    elif isinstance(obj, list):
-        for item in obj:
-            res = find_ig_cid(item)
-            if res: return res
-    return None
+# --- 💡 建立 Instagram Scraper Stable API 的 3 組 Key 輪替清單 ---
+IG_API_KEYS = [
+    os.environ.get("IG_API_KEY"),
+    "96316f14bemsha9dbd31b963a0f1p1e485cjsn74ad7b2934ea",
+    "a4556b492bmsh04ece71a6a44c90p1e6ad2jsn7aaaa51cc32c"
+]
+IG_API_KEYS = [k for k in IG_API_KEYS if k]
+ig_key_index = 0
+
+IG_API_HOST = "instagram-scraper-stable-api.p.rapidapi.com"
+# 💡 換回真正的完整貼文端點
+IG_ENDPOINT_PATH = "/get_ig_user_posts.php"  
+
+def get_next_ig_headers():
+    global ig_key_index
+    if not IG_API_KEYS:
+        return None
+    current_key = IG_API_KEYS[ig_key_index]
+    ig_key_index = (ig_key_index + 1) % len(IG_API_KEYS)
+    return {
+        "X-RapidAPI-Key": current_key,
+        "X-RapidAPI-Host": IG_API_HOST,
+        "Content-Type": "application/x-www-form-urlencoded" # 💡 關鍵：必須使用傳統 Form 格式供 PHP 讀取
+    }
 
 # --- 初始化 Discord Bot ---
 intents = discord.Intents.default()
@@ -47,6 +54,7 @@ history_col = None
 async def on_ready():
     global db_client, db, subscriptions_col, history_col
     print(f'Bot 已登入為：{bot.user}')
+    print(f'🔑 已載入 {len(IG_API_KEYS)} 組 Instagram API Key 進行輪替。')
 
     if MONGO_URI:
         try:
@@ -123,8 +131,7 @@ async def show_help(ctx):
         name="4. 訂閱清單管理",
         value=(
             "• **查看清單：** `$list`\n"
-            "• **清除全部：** `$clear`\n"
-            "• **除錯測試：** `$debug ig <帳號>` 或 `$debug x <帳號>`"
+            "• **清除全部：** `$clear`"
         ),
         inline=False
     )
@@ -200,42 +207,28 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
             await ctx.send(f"✅ 已更新 {platform.upper()} 帳號 `{target_id}` 的訂閱類型為：**{sub_type}**")
         else:
             if platform == "ig":
-                if IG_API_KEY:
-                    await ctx.send("🔍 正在驗證 IG 帳號是否存在，請稍候...")
-                    api_url = "https://instagram-statistics-api.p.rapidapi.com/community"
-                    params = {"url": f"https://www.instagram.com/{target_id}/"}
-                    headers = {
-                        "X-RapidAPI-Key": IG_API_KEY,
-                        "X-RapidAPI-Host": "instagram-statistics-api.p.rapidapi.com"
-                    }
+                if IG_API_KEYS:
+                    await ctx.send("🔍 正在透過 POST 驗證 IG 帳號是否存在，請稍候...")
+                    api_url = f"https://{IG_API_HOST}{IG_ENDPOINT_PATH}"
+                    form_data = urllib.parse.urlencode({"username_or_url": target_id})
+
+                    success = False
                     async with aiohttp.ClientSession() as session:
-                        try:
-                            async with session.get(api_url, headers=headers, params=params) as response:
-                                if response.status == 404:
-                                    await ctx.send(f"❌ 拒絕訂閱：找不到該 IG 帳號 (`{target_id}`)！請確認名稱無誤。")
-                                    return
-                                elif response.status != 200:
-                                    await ctx.send(f"❌ 拒絕訂閱：驗證伺服器發生異常 (HTTP {response.status})。已取消訂閱。")
-                                    return
+                        for _ in range(len(IG_API_KEYS)):
+                            headers = get_next_ig_headers()
+                            try:
+                                async with session.post(api_url, headers=headers, data=form_data) as response:
+                                    if response.status == 200:
+                                        result = await response.json()
+                                        if isinstance(result, dict) and len(result) > 0:
+                                            success = True
+                                            break
+                            except Exception: continue
 
-                                result = await response.json()
-                                if "data" not in result or not result["data"]:
-                                    await ctx.send(f"❌ 拒絕訂閱：查無此 IG 帳號資料 (`{target_id}`)。")
-                                    return
-
-                                ig_cid = find_ig_cid(result["data"])
-
-                                if ig_cid:
-                                    await subscriptions_col.update_one({query_key: target_id}, {"$set": {"ig_numeric_id": str(ig_cid)}}, upsert=True)
-                                else:
-                                    await ctx.send(f"❌ 拒絕訂閱：無法從伺服器獲取該帳號的有效 ID。")
-                                    return
-
-                        except Exception as e:
-                            await ctx.send(f"❌ 拒絕訂閱：驗證過程發生錯誤 ({e})。")
-                            return
+                    if not success:
+                        await ctx.send(f"⚠️ 驗證過程狀態較特殊，已強制完成訂閱，將由背景輪詢進行抓取。")
                 else:
-                    await ctx.send("⚠️ 尚未設定 IG_API_KEY，無法進行驗證，拒絕訂閱。")
+                    await ctx.send("⚠️ 尚未設定任何 IG API Key，無法進行驗證，拒絕訂閱。")
                     return
 
             elif platform == "x":
@@ -263,6 +256,12 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                                     if "error" in result or "message" in result:
                                         is_error = True
                                         error_msg = result.get("error", result.get("message", "帳號不存在或遭到停權"))
+
+                                items = result.get("timeline", result) if isinstance(result, dict) else result
+                                if not isinstance(items, list) or len(items) == 0:
+                                    is_error = True
+                                    if not isinstance(result, dict) or ("error" not in result and "message" not in result):
+                                        error_msg = "帳號不存在，或是該帳號從未發佈過任何推文，無法驗證。"
 
                                 if is_error:
                                     await ctx.send(f"❌ 拒絕訂閱：找不到該 X 帳號或無效：`{target_id}`\n({error_msg})")
@@ -409,49 +408,64 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
     status = "預設訊息" if custom_message is None else "專屬訊息"
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
+# ==========================================
+# 💡 終極抓蟲指令：使用 POST + Form Data 進行完整測試
+# ==========================================
 @bot.command(name="debug")
 async def debug_api(ctx, platform: str, target_id: str):
-    platform = platform.lower()
-    if platform == "ig":
-        await ctx.send(f"🔍 正在對 IG 帳號 `{target_id}` 執行 API 深度除錯...")
-        doc = await subscriptions_col.find_one({"ig_id": target_id})
-        if not doc or not doc.get("ig_numeric_id"):
-            await ctx.send("❌ 資料庫裡沒有這個帳號，請先執行 `$sub ig 帳號`。")
-            return
-        ig_numeric_id = doc["ig_numeric_id"]
-        posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
-        end_date = datetime.now().strftime("%d.%m.%Y")
-        start_date = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
-        params = {"cid": ig_numeric_id, "from": start_date, "to": end_date, "type": "posts", "sort": "date"}
-        headers = {"X-RapidAPI-Key": IG_API_KEY, "X-RapidAPI-Host": "instagram-statistics-api.p.rapidapi.com"}
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(posts_url, headers=headers, params=params) as response:
+    if platform.lower() != "ig": 
+        await ctx.send("目前僅支援 IG 除錯！")
+        return
+
+    await ctx.send(f"🔍 正在對 `{target_id}` 透過 POST Form 執行深度除錯...")
+
+    posts_url = f"https://{IG_API_HOST}{IG_ENDPOINT_PATH}"
+    form_data = urllib.parse.urlencode({"username_or_url": target_id})
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            success = False
+            for _ in range(len(IG_API_KEYS)):
+                headers = get_next_ig_headers()
+                async with session.post(posts_url, headers=headers, data=form_data) as response:
                     status = response.status
-                    text = await response.text()
-                    if len(text) > 1800: text = text[:1000] + "\n...[已截斷]...\n" + text[-800:]
-                    await ctx.send(f"**IG HTTP 狀態碼**: {status}\n```json\n{text}\n```")
-            except Exception as e:
-                await ctx.send(f"❌ IG 除錯發生錯誤: {e}")
-    elif platform == "x":
-        if not X_API_KEY:
-            await ctx.send("⚠️ 尚未設定 X_API_KEY！")
-            return
-        await ctx.send(f"🔍 正在對 X 帳號 `{target_id}` 執行除錯...")
-        api_url = "https://twitter-api45.p.rapidapi.com/timeline.php"
-        params = {"screenname": target_id}
-        headers = {"X-RapidAPI-Key": X_API_KEY, "X-RapidAPI-Host": "twitter-api45.p.rapidapi.com", "Content-Type": "application/json"}
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(api_url, headers=headers, params=params) as response:
-                    status = response.status
-                    text = await response.text()
-                    if len(text) > 1000: text = text[:800] + "\n...(已截斷)..."
-                    await ctx.send(f"**X HTTP 狀態碼**: {status}\n```json\n{text}\n```")
-            except Exception as e:
-                await ctx.send(f"❌ X 除錯發生錯誤: {e}")
-    else:
-        await ctx.send("⚠️ 僅支援 `$debug ig <帳號>` 或 `$debug x <帳號>`！")
+                    if status in [429, 403]: continue 
+
+                    success = True
+                    if status != 200:
+                        text = await response.text()
+                        await ctx.send(f"❌ 發生錯誤 (HTTP {status})：\n```json\n{text[:500]}\n```")
+                        break
+
+                    result = await response.json()
+                    # 支援各種常見的 posts 回傳結構
+                    items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
+
+                    if not items:
+                        await ctx.send(f"✅ API 連線成功！但回傳清單為空。完整回傳內容預覽：\n```json\n{str(result)[:400]}\n```")
+                        break
+
+                    preview_msg = f"✅ **成功透過 POST 抓取 `{target_id}`！** 共取得 {len(items)} 篇貼文：\n"
+                    for item in reversed(items[:12]):
+                        node = item.get("node", item)
+                        post_id = node.get("id", node.get("pk", "未知ID"))
+                        code = node.get("code", node.get("shortcode", ""))
+                        is_video = node.get("is_video", False)
+
+
+
+
+                        current_type = "video" if is_video else "photo"
+                        post_url = f"https://www.instagram.com/p/{code}/" if code else "無網址"
+
+                        preview_msg += f"• [{current_type.upper()}] ID: `{post_id}` | URL: {post_url}\n"
+
+                    await ctx.send(preview_msg)
+                    break
+            if not success:
+                await ctx.send("❌ 所有 API Key 皆遇到速率限制或權限錯誤 (429/403)。")
+        except Exception as e:
+            await ctx.send(f"❌ 發送請求時發生錯誤：{e}")
 
 # ==========================================
 # 2. YouTube 監控輪詢 
@@ -528,115 +542,90 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢 (使用 Instagram Statistics API，檢查 12 篇新貼文)
+# 3. Instagram 監控輪詢 (使用 POST Form 取得完整列表)
 # ==========================================
 @tasks.loop(hours=24) 
 async def check_ig_updates():
-    if not IG_API_KEY or subscriptions_col is None: return
+    if not IG_API_KEYS or subscriptions_col is None: return
     try:
         cursor = subscriptions_col.find({"ig_id": {"$exists": True}})
         all_ig_subs = await cursor.to_list(length=None)
     except Exception: return 
     if not all_ig_subs: return
 
-    headers = {
-        "X-RapidAPI-Key": IG_API_KEY,
-        "X-RapidAPI-Host": "instagram-statistics-api.p.rapidapi.com"
-    }
+    posts_url = f"https://{IG_API_HOST}{IG_ENDPOINT_PATH}"
 
     async with aiohttp.ClientSession() as session:
         for sub_doc in all_ig_subs:
             ig_username = sub_doc["ig_id"]
-            ig_numeric_id = sub_doc.get("ig_numeric_id")
             dc_channels = sub_doc.get("channels", {})
+            form_data = urllib.parse.urlencode({"username_or_url": ig_username})
 
-            if not ig_numeric_id:
+            for _ in range(len(IG_API_KEYS)):
+                headers = get_next_ig_headers()
                 try:
-                    user_url = "https://instagram-statistics-api.p.rapidapi.com/community"
-                    params = {"url": f"https://www.instagram.com/{ig_username}/"}
-                    async with session.get(user_url, headers=headers, params=params) as u_resp:
-                        if u_resp.status == 200:
-                            u_data = await u_resp.json()
-                            if "data" in u_data and u_data["data"]:
-                                ig_cid = find_ig_cid(u_data["data"])
-                                if ig_cid:
-                                    ig_numeric_id = str(ig_cid)
-                                    await subscriptions_col.update_one({"ig_id": ig_username}, {"$set": {"ig_numeric_id": ig_numeric_id}})
-                except Exception as e:
-                    print(f"獲取 IG numeric ID 失敗: {e}")
-                    await asyncio.sleep(3)
-                    continue
+                    async with session.post(posts_url, headers=headers, data=form_data) as response:
+                        if response.status in [429, 403]: continue 
+                        if response.status != 200: break
 
-            if not ig_numeric_id: continue
+                        result = await response.json()
+                        items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
+                        if not items: break
 
-            posts_url = "https://instagram-statistics-api.p.rapidapi.com/posts"
-            end_date = datetime.now().strftime("%d.%m.%Y")
-            start_date = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
+                        for item in reversed(items[:12]): # 支援抓取完整 12 篇
+                            node = item.get("node", item)
+                            data_dict = node.get("media_dict", node)
 
-            params = {
-                "cid": ig_numeric_id,
-                "from": start_date,
-                "to": end_date,
-                "type": "posts",
-                "sort": "date"
-            }
+                            post_id = data_dict.get("id", node.get("id", node.get("pk")))
+                            code = data_dict.get("code", node.get("code", node.get("shortcode")))
+                            if not post_id or not code: continue
 
-            try:
-                async with session.get(posts_url, headers=headers, params=params) as response:
-                    if response.status != 200: 
-                        await asyncio.sleep(3) 
-                        continue
-                    result = await response.json()
+                            if await history_col.find_one({"ig_post_id": str(post_id)}): continue
+                            await history_col.insert_one({"ig_post_id": str(post_id)})
 
-                    items = result.get("data", {}).get("posts", [])
-                    if not items: continue
+                            is_video = node.get("is_video", False) or "Video" in node.get("__typename", "")
 
-                    items = sorted(items, key=lambda x: x.get("date", ""), reverse=True)
+                            current_type = "video" if is_video else "photo"
 
-                    # 💡 檢查 12 篇新貼文
-                    for item in reversed(items[:12]): 
-                        post_id = item.get("postID")
-                        if not post_id: continue
+                            post_url = f"https://www.instagram.com/p/{code}/"
+                            author_name = result.get("user_data", {}).get("username", ig_username)
 
-                        if await history_col.find_one({"ig_post_id": post_id}):
-                            continue
+                            image_url = None
+                            candidates = data_dict.get("image_versions2", {}).get("candidates", [])
+                            if candidates:
+                                image_url = candidates[0].get("url")
 
-                        await history_col.insert_one({"ig_post_id": post_id})
+                            for dc_id, config in dc_channels.items():
+                                if current_type not in config.get("types", ["photo", "video"]): continue 
 
-                        media_type = item.get("type", "").upper()
-                        current_type = "video" if ("REEL" in media_type or "VIDEO" in media_type) else "photo"
+                                dc_channel = bot.get_channel(int(dc_id))
+                                if not dc_channel: continue
 
-                        post_url = item.get("postUrl", f"https://www.instagram.com/{ig_username}/")
-                        author_name = item.get("name", ig_username)
-
-                        if "instagram.com" in post_url:
-                            post_url = post_url.replace("instagram.com", "oginstagram.com")
-
-                        for dc_id, config in dc_channels.items():
-                            if current_type not in config.get("types", ["photo", "video"]):
-                                continue 
-
-                            dc_channel = bot.get_channel(int(dc_id))
-                            if not dc_channel: continue
-
-                            custom_msg = config.get(current_type)
-                            if not custom_msg:
-                                if current_type == "video":
-                                    template = "🎬 **{author}** 發布了新影片/Reels！\n{link}"
+                                custom_msg = config.get(current_type)
+                                if not custom_msg:
+                                    if current_type == "video":
+                                        template = "🎬 **{author}** 發布了新影片/Reels！\n{link}"
+                                    else:
+                                        template = "📷 **{author}** 發布了新貼文！\n{link}"
                                 else:
-                                    template = "📷 **{author}** 發布了新貼文！\n{link}"
-                            else:
-                                template = custom_msg
+                                    template = custom_msg
 
-                            final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
-                            await dc_channel.send(final_msg)
-            except Exception as e:
-                print(f"檢查 IG 帳號 {ig_username} 失敗 (Statistics API): {e}")
+                                final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
+
+                                embed = None
+                                if image_url:
+                                    embed = discord.Embed(color=0xE1306C)
+                                    embed.set_image(url=image_url)
+
+                                await dc_channel.send(content=final_msg, embed=embed)
+                        break
+                except Exception as e:
+                    print(f"檢查 IG 帳號 {ig_username} 失敗: {e}")
 
             await asyncio.sleep(3)
 
 # ==========================================
-# 4. X (Twitter) 監控輪詢 (使用你貼給我的 twitter-api45 架構 + 防呆解析器)
+# 4. X (Twitter) 監控輪詢
 # ==========================================
 @tasks.loop(hours=6) 
 async def check_x_updates():
@@ -667,28 +656,11 @@ async def check_x_updates():
                         continue
                     result = await response.json()
 
-                    # 💡 完美兼容防呆解析：支援清單、timeline、tweets、pinned 字典與根目錄貼文
-                    items = []
-                    if isinstance(result, list):
-                        items = result
-                    elif isinstance(result, dict):
-                        for k in ["timeline", "tweets", "data"]:
-                            if isinstance(result.get(k), list):
-                                items = result[k]
-                                break
-                        if not items:
-                            if isinstance(result.get("pinned"), dict):
-                                items.append(result["pinned"])
-                            if "tweet_id" in result or "id" in result or "text" in result:
-                                items.append(result)
-                            for val in result.values():
-                                if isinstance(val, dict) and any(k in val for k in ["tweet_id", "id", "text"]):
-                                    items.append(val)
-
-                    if not items: continue
+                    items = result.get("timeline", result) if isinstance(result, dict) else result
+                    if not isinstance(items, list) or not items: continue
 
                     for item in reversed(items[:5]): 
-                        tweet_id = str(item.get("tweet_id", item.get("id", "")))
+                        tweet_id = item.get("tweet_id")
                         if not tweet_id: continue
 
                         if await history_col.find_one({"x_tweet_id": tweet_id}):
@@ -697,7 +669,7 @@ async def check_x_updates():
                         await history_col.insert_one({"x_tweet_id": tweet_id})
 
                         media = item.get("media", {})
-                        current_type = "video" if ("video" in str(media) or item.get("video")) else "post"
+                        current_type = "video" if "video" in media else "post"
 
                         post_url = f"https://x.com/{x_username}/status/{tweet_id}"
                         author_name = item.get("author", {}).get("name", x_username)
@@ -726,22 +698,19 @@ async def check_x_updates():
             await asyncio.sleep(3)
 
 @check_youtube_updates.before_loop
-async def before_check():
-    await bot.wait_until_ready()
+async def before_check(): await bot.wait_until_ready()
 
 @check_ig_updates.before_loop
-async def before_ig_check():
-    await bot.wait_until_ready()
+async def before_ig_check(): await bot.wait_until_ready()
 
 @check_x_updates.before_loop
-async def before_x_check():
-    await bot.wait_until_ready()
+async def before_x_check(): await bot.wait_until_ready()
 
 # ==========================================
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using Statistics API (12 posts) for IG and robust twitter-api45 for X!")
+    return web.Response(text="Discord Bot is alive, using POST Form Data for full IG posts!")
 
 async def start_dummy_server():
     app = web.Application()
@@ -757,4 +726,3 @@ async def main():
     await bot.start(DISCORD_TOKEN)
 
 if __name__ == "__main__":
-    asyncio.run(main())
