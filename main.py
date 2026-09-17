@@ -622,6 +622,7 @@ async def check_ig_updates():
 # ==========================================
 # 4. X (Twitter) 監控輪詢
 # ==========================================
+# 💡 已將 X 的輪詢頻率改為 6 小時
 @tasks.loop(hours=6) 
 async def check_x_updates():
     if not X_API_KEY or subscriptions_col is None: return
