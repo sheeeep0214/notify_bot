@@ -35,7 +35,7 @@ def get_next_ig_headers():
     return {
         "X-RapidAPI-Key": current_key,
         "X-RapidAPI-Host": IG_API_HOST,
-        "Content-Type": "application/x-www-form-urlencoded" 
+        "Content-Type": "application/x-www-form-urlencoded"
     }
 
 # --- 初始化 Discord Bot ---
@@ -231,6 +231,7 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                     return
                     
             elif platform == "x":
+                # --- 完全替換為 X_ok.py 的驗證邏輯 ---
                 if X_API_KEY:
                     await ctx.send("🔍 正在驗證 X (Twitter) 帳號是否存在，請稍候...")
                     api_url = "https://twitter-api45.p.rapidapi.com/timeline.php"
@@ -407,9 +408,6 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
     status = "預設訊息" if custom_message is None else "專屬訊息"
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
-# ==========================================
-# 💡 終極抓蟲指令：使用 POST + Form Data 進行完整測試
-# ==========================================
 @bot.command(name="debug")
 async def debug_api(ctx, platform: str, target_id: str):
     if platform.lower() != "ig": 
@@ -437,7 +435,6 @@ async def debug_api(ctx, platform: str, target_id: str):
                         break
                         
                     result = await response.json()
-                    # 支援各種常見的 posts 回傳結構
                     items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
                     
                     if not items:
@@ -517,7 +514,11 @@ async def check_youtube_updates():
                             
                             for dc_id, custom_msgs in dc_channels.items():
                                 dc_channel = bot.get_channel(int(dc_id))
-                                if not dc_channel: continue
+                                if not dc_channel:
+                                    try:
+                                        dc_channel = await bot.fetch_channel(int(dc_id))
+                                    except Exception:
+                                        continue
                                 
                                 custom_msg = custom_msgs.get(current_type) if isinstance(custom_msgs, dict) else custom_msgs
                                 
@@ -593,7 +594,11 @@ async def check_ig_updates():
                                 if current_type not in config.get("types", ["photo", "video"]): continue 
                                     
                                 dc_channel = bot.get_channel(int(dc_id))
-                                if not dc_channel: continue
+                                if not dc_channel:
+                                    try:
+                                        dc_channel = await bot.fetch_channel(int(dc_id))
+                                    except Exception:
+                                        continue
                                 
                                 custom_msg = config.get(current_type)
                                 if not custom_msg:
@@ -621,6 +626,7 @@ async def check_ig_updates():
 # ==========================================
 # 4. X (Twitter) 監控輪詢
 # ==========================================
+# --- 完全替換為 X_ok.py 的 X 推播邏輯 ---
 @tasks.loop(hours=6) 
 async def check_x_updates():
     if not X_API_KEY or subscriptions_col is None: return
@@ -651,20 +657,10 @@ async def check_x_updates():
                     result = await response.json()
                     
                     items = result.get("timeline", result) if isinstance(result, dict) else result
-                    
-                    # 💡 最小幅度修正：如果 API 回傳包含 pinned 或是單篇推文的字典，轉為清單避免靜默失敗
-                    if isinstance(items, dict):
-                        temp_list = []
-                        if "pinned" in items and isinstance(items["pinned"], dict):
-                            temp_list.append(items["pinned"])
-                        if "tweet_id" in items or "id" in items or "text" in items:
-                            temp_list.append(items)
-                        items = temp_list
-
                     if not isinstance(items, list) or len(items) == 0: continue
                     
                     for item in reversed(items[:5]): 
-                        tweet_id = str(item.get("tweet_id", item.get("id", "")))
+                        tweet_id = item.get("tweet_id")
                         if not tweet_id: continue
                         
                         if await history_col.find_one({"x_tweet_id": tweet_id}):
@@ -683,7 +679,11 @@ async def check_x_updates():
                                 continue 
                                 
                             dc_channel = bot.get_channel(int(dc_id))
-                            if not dc_channel: continue
+                            if not dc_channel:
+                                try:
+                                    dc_channel = await bot.fetch_channel(int(dc_id))
+                                except Exception:
+                                    continue
                             
                             custom_msg = config.get(current_type)
                             if not custom_msg:
@@ -714,7 +714,7 @@ async def before_x_check(): await bot.wait_until_ready()
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, cleanly merged ig_ok base with X_ok dict-fix logic!")
+    return web.Response(text="Discord Bot is alive, integrated completely as requested!")
 
 async def start_dummy_server():
     app = web.Application()
