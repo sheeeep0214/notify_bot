@@ -610,7 +610,7 @@ async def check_ig_updates():
             await asyncio.sleep(3)
 
 # ==========================================
-# 4. X (Twitter) 監控輪詢 (💡 已修復解析邏輯以適應真實 API 結構)
+# 4. X (Twitter) 監控輪詢 (💡 完美對應實際回傳格式)
 # ==========================================
 @tasks.loop(minutes=30) 
 async def check_x_updates():
@@ -641,20 +641,23 @@ async def check_x_updates():
                         continue
                     result = await response.json()
                     
-                    # 💡 智慧適應各種回傳結構（清單、timeline 鍵、或單篇字典）
+                    # 💡 完美解析實際的 X API 回傳格式（含 pinned 與根目錄貼文）
                     items = []
                     if isinstance(result, list):
                         items = result
                     elif isinstance(result, dict):
+                        # 檢查常見清單鍵值
                         for k in ["timeline", "tweets", "data"]:
                             if isinstance(result.get(k), list):
                                 items = result[k]
                                 break
-                        # 如果都沒有找到清單，但 result 本身就是一筆推文資料
-                        if not items and ("tweet_id" in result or "id" in result or "text" in result or "pinned" in result):
+                        # 如果是像這次除錯截圖那樣的單篇/置頂字典格式
+                        if not items:
                             if isinstance(result.get("pinned"), dict):
                                 items.append(result["pinned"])
-                            items.append(result)
+                            # 根目錄本身就是一篇貼文（有 text 欄位）
+                            if "text" in result or "tweet_id" in result or "id" in result:
+                                items.append(result)
                             
                     if not items: continue
                     
@@ -709,7 +712,7 @@ async def before_x_check(): await bot.wait_until_ready()
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, X parsing bug completely fixed!")
+    return web.Response(text="Discord Bot is alive, X timeline dict parser fixed!")
 
 async def start_dummy_server():
     app = web.Application()
