@@ -131,7 +131,8 @@ async def show_help(ctx):
         name="4. 訂閱清單管理",
         value=(
             "• **查看清單：** `$list`\n"
-            "• **清除全部：** `$clear`"
+            "• **清除全部：** `$clear`\n"
+            "• **立即測試 API：** `$debug ig <帳號>` 或 `$debug x <帳號>`"
         ),
         inline=False
     )
@@ -232,6 +233,7 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                     return
                     
             elif platform == "x":
+                # --- 完全套用 X_ok.py 的 X 驗證邏輯 ---
                 if X_API_KEY:
                     await ctx.send("🔍 正在驗證 X (Twitter) 帳號是否存在，請稍候...")
                     api_url = "https://twitter-api45.p.rapidapi.com/timeline.php"
@@ -409,59 +411,79 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
 # ==========================================
-# 💡 終極抓蟲指令：使用 POST + Form Data 進行完整測試
+# 💡 測試指令：整合 ig_ok 的 IG 測試與 X_ok 的 X 測試
 # ==========================================
 @bot.command(name="debug")
 async def debug_api(ctx, platform: str, target_id: str):
-    if platform.lower() != "ig": 
-        await ctx.send("目前僅支援 IG 除錯！")
-        return
+    platform = platform.lower()
+    if platform == "ig":
+        await ctx.send(f"🔍 正在對 `{target_id}` 透過 POST Form 執行深度除錯...")
+        posts_url = f"https://{IG_API_HOST}{IG_ENDPOINT_PATH}"
+        form_data = urllib.parse.urlencode({"username_or_url": target_id})
         
-    await ctx.send(f"🔍 正在對 `{target_id}` 透過 POST Form 執行深度除錯...")
-    
-    posts_url = f"https://{IG_API_HOST}{IG_ENDPOINT_PATH}"
-    form_data = urllib.parse.urlencode({"username_or_url": target_id})
-    
-    async with aiohttp.ClientSession() as session:
-        try:
-            success = False
-            for _ in range(len(IG_API_KEYS)):
-                headers = get_next_ig_headers()
-                async with session.post(posts_url, headers=headers, data=form_data) as response:
+        async with aiohttp.ClientSession() as session:
+            try:
+                success = False
+                for _ in range(len(IG_API_KEYS)):
+                    headers = get_next_ig_headers()
+                    async with session.post(posts_url, headers=headers, data=form_data) as response:
+                        status = response.status
+                        if status in [429, 403]: continue 
+                        
+                        success = True
+                        if status != 200:
+                            text = await response.text()
+                            await ctx.send(f"❌ 發生錯誤 (HTTP {status})：\n```json\n{text[:500]}\n```")
+                            break
+                            
+                        result = await response.json()
+                        items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
+                        
+                        if not items:
+                            await ctx.send(f"✅ API 連線成功！但回傳清單為空。完整回傳內容預覽：\n```json\n{str(result)[:400]}\n```")
+                            break
+                            
+                        preview_msg = f"✅ **成功透過 POST 抓取 `{target_id}`！** 共取得 {len(items)} 篇貼文：\n"
+                        for item in reversed(items[:12]):
+                            node = item.get("node", item)
+                            post_id = node.get("id", node.get("pk", "未知ID"))
+                            code = node.get("code", node.get("shortcode", ""))
+                            is_video = node.get("is_video", False)
+                            current_type = "video" if is_video else "photo"
+                            post_url = f"https://www.instagram.com/p/{code}/" if code else "無網址"
+                            
+                            preview_msg += f"• [{current_type.upper()}] ID: `{post_id}` | URL: {post_url}\n"
+                            
+                        await ctx.send(preview_msg)
+                        break
+                if not success:
+                    await ctx.send("❌ 所有 API Key 皆遇到速率限制或權限錯誤 (429/403)。")
+            except Exception as e:
+                await ctx.send(f"❌ 發送請求時發生錯誤：{e}")
+                
+    elif platform == "x":
+        if not X_API_KEY:
+            await ctx.send("⚠️ 尚未設定 X_API_KEY！")
+            return
+        await ctx.send(f"🔍 正在對 X 帳號 `{target_id}` 執行除錯...")
+        api_url = "https://twitter-api45.p.rapidapi.com/timeline.php"
+        params = {"screenname": target_id}
+        headers = {
+            "X-RapidAPI-Key": X_API_KEY,
+            "X-RapidAPI-Host": "twitter-api45.p.rapidapi.com",
+            "Content-Type": "application/json"
+        }
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(api_url, headers=headers, params=params) as response:
                     status = response.status
-                    if status in [429, 403]: continue 
-                    
-                    success = True
-                    if status != 200:
-                        text = await response.text()
-                        await ctx.send(f"❌ 發生錯誤 (HTTP {status})：\n```json\n{text[:500]}\n```")
-                        break
-                        
-                    result = await response.json()
-                    # 支援各種常見的 posts 回傳結構
-                    items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
-                    
-                    if not items:
-                        await ctx.send(f"✅ API 連線成功！但回傳清單為空。完整回傳內容預覽：\n```json\n{str(result)[:400]}\n```")
-                        break
-                        
-                    preview_msg = f"✅ **成功透過 POST 抓取 `{target_id}`！** 共取得 {len(items)} 篇貼文：\n"
-                    for item in reversed(items[:12]):
-                        node = item.get("node", item)
-                        post_id = node.get("id", node.get("pk", "未知ID"))
-                        code = node.get("code", node.get("shortcode", ""))
-                        is_video = node.get("is_video", False)
-                        current_type = "video" if is_video else "photo"
-                        post_url = f"https://www.instagram.com/p/{code}/" if code else "無網址"
-                        
-                        preview_msg += f"• [{current_type.upper()}] ID: `{post_id}` | URL: {post_url}\n"
-                        
-                    await ctx.send(preview_msg)
-                    break
-            if not success:
-                await ctx.send("❌ 所有 API Key 皆遇到速率限制或權限錯誤 (429/403)。")
-        except Exception as e:
-            await ctx.send(f"❌ 發送請求時發生錯誤：{e}")
+                    text = await response.text()
+                    if len(text) > 1000: text = text[:800] + "\n...(已截斷)..."
+                    await ctx.send(f"**X HTTP 狀態碼**: {status}\n```json\n{text}\n```")
+            except Exception as e:
+                await ctx.send(f"❌ X 除錯發生錯誤: {e}")
+    else:
+        await ctx.send("⚠️ 僅支援 `$debug ig <帳號>` 或 `$debug x <帳號>`！")
 
 # ==========================================
 # 2. YouTube 監控輪詢 
@@ -620,7 +642,7 @@ async def check_ig_updates():
             await asyncio.sleep(3)
 
 # ==========================================
-# 4. X (Twitter) 監控輪詢
+# 4. X (Twitter) 監控輪詢 (完全套用 X_ok.py)
 # ==========================================
 # 💡 已將 X 的輪詢頻率改為 6 小時
 @tasks.loop(hours=6) 
@@ -653,7 +675,7 @@ async def check_x_updates():
                     result = await response.json()
                     
                     items = result.get("timeline", result) if isinstance(result, dict) else result
-                    if not isinstance(items, list) or not items: continue
+                    if not isinstance(items, list) or len(items) == 0: continue
                     
                     for item in reversed(items[:5]): 
                         tweet_id = item.get("tweet_id")
@@ -706,7 +728,7 @@ async def before_x_check(): await bot.wait_until_ready()
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using POST Form Data for full IG posts!")
+    return web.Response(text="Discord Bot is alive, combined perfectly per instruction!")
 
 async def start_dummy_server():
     app = web.Application()
