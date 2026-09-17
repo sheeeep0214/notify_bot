@@ -14,7 +14,7 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 MONGO_URI = os.environ.get("MONGO_URI")
 X_API_KEY = os.environ.get("X_API_KEY")
 
-# --- 💡 建立 Instagram Scraper Stable API 的 3 組 Key 輪替清單 ---
+# --- 💡 IG 3 組 Key 輪替清單與正確端點 (Instagram Scraper Stable API) ---
 IG_API_KEYS = [
     os.environ.get("IG_API_KEY"),
     "96316f14bemsha9dbd31b963a0f1p1e485cjsn74ad7b2934ea",
@@ -24,7 +24,7 @@ IG_API_KEYS = [k for k in IG_API_KEYS if k]
 ig_key_index = 0
 
 IG_API_HOST = "instagram-scraper-stable-api.p.rapidapi.com"
-IG_ENDPOINT_PATH = "/ig_get_fb_profile_hover.php"  
+IG_ENDPOINT_PATH = "/ig_get_fb_profile_hover.php"
 
 def get_next_ig_headers():
     global ig_key_index
@@ -52,7 +52,7 @@ history_col = None
 async def on_ready():
     global db_client, db, subscriptions_col, history_col
     print(f'Bot 已登入為：{bot.user}')
-    print(f'🔑 已載入 {len(IG_API_KEYS)} 組 Instagram API Key 進行輪替。')
+    print(f'🔑 已載入 {len(IG_API_KEYS)} 組 IG API Key 進行輪替。')
     
     if MONGO_URI:
         try:
@@ -207,7 +207,7 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
         else:
             if platform == "ig":
                 if IG_API_KEYS:
-                    await ctx.send("🔍 正在透過 GET 驗證 IG 帳號是否存在，請稍候...")
+                    await ctx.send("🔍 正在透過 IG Scraper API 驗證帳號是否存在，請稍候...")
                     api_url = f"https://{IG_API_HOST}{IG_ENDPOINT_PATH}"
                     params = {"username_or_url": target_id}
                     
@@ -402,7 +402,7 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
 # ==========================================
-# 💡 升級版除錯指令
+# 💡 雙向除錯指令
 # ==========================================
 @bot.command(name="debug")
 async def debug_api(ctx, platform: str, target_id: str):
@@ -453,7 +453,7 @@ async def debug_api(ctx, platform: str, target_id: str):
         await ctx.send("⚠️ 僅支援 `$debug ig <帳號>` 或 `$debug x <帳號>`！")
 
 # ==========================================
-# 2. YouTube 監控輪詢 (每 2 分鐘)
+# 2. YouTube 監控輪詢 
 # ==========================================
 @tasks.loop(minutes=2)
 async def check_youtube_updates():
@@ -527,7 +527,7 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢
+# 3. Instagram 監控輪詢 (使用穩定 IG Scraper API + 3 Key 輪替 + Embed 縮圖)
 # ==========================================
 @tasks.loop(hours=1) 
 async def check_ig_updates():
@@ -610,7 +610,7 @@ async def check_ig_updates():
             await asyncio.sleep(3)
 
 # ==========================================
-# 4. X (Twitter) 監控輪詢 (💡 萬用字典與清單解析器)
+# 4. X (Twitter) 監控輪詢 (使用 twitter-api45 搭配萬用解析器，確保有通知)
 # ==========================================
 @tasks.loop(minutes=30) 
 async def check_x_updates():
@@ -641,27 +641,20 @@ async def check_x_updates():
                         continue
                     result = await response.json()
                     
-                    # 💡 萬用解析：全面支援清單、timeline、tweets、pinned 字典與根目錄貼文
+                    # 💡 萬用解析器：完美支援清單、timeline、tweets、pinned 字典與根目錄貼文
                     items = []
                     if isinstance(result, list):
                         items = result
                     elif isinstance(result, dict):
-                        # 檢查常見清單鍵值
                         for k in ["timeline", "tweets", "data", "result"]:
                             if isinstance(result.get(k), list):
                                 items = result[k]
                                 break
-                        
-                        # 如果找不到清單，從單篇/置頂字典中提取
                         if not items:
                             if isinstance(result.get("pinned"), dict):
                                 items.append(result["pinned"])
-                            
-                            # 檢查根目錄本身是不是一篇貼文
                             if any(k in result for k in ["tweet_id", "id", "text", "created_at"]):
                                 items.append(result)
-                            
-                            # 檢查字典內的值是否有包含貼文物件
                             for val in result.values():
                                 if isinstance(val, dict) and any(k in val for k in ["tweet_id", "id", "text"]):
                                     items.append(val)
@@ -719,7 +712,7 @@ async def before_x_check(): await bot.wait_until_ready()
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, X universal dictionary parser applied!")
+    return web.Response(text="Discord Bot is alive, combining Stable IG Scraper API and robust X parser!")
 
 async def start_dummy_server():
     app = web.Application()
