@@ -24,8 +24,8 @@ IG_API_KEYS = [k for k in IG_API_KEYS if k]
 ig_key_index = 0
 
 IG_API_HOST = "instagram-scraper-stable-api.p.rapidapi.com"
-# 💡 使用真正能抓取多篇完整貼文的 POST 端點
-IG_ENDPOINT_PATH = "/get_ig_user_posts.php"  
+# 💡 換回唯一能成功吐出完整 JSON 數據的正確 GET 端點
+IG_ENDPOINT_PATH = "/ig_get_fb_profile_hover.php"  
 
 def get_next_ig_headers():
     global ig_key_index
@@ -35,8 +35,7 @@ def get_next_ig_headers():
     ig_key_index = (ig_key_index + 1) % len(IG_API_KEYS)
     return {
         "X-RapidAPI-Key": current_key,
-        "X-RapidAPI-Host": IG_API_HOST,
-        "Content-Type": "application/json"
+        "X-RapidAPI-Host": IG_API_HOST
     }
 
 # --- 初始化 Discord Bot ---
@@ -208,19 +207,19 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
         else:
             if platform == "ig":
                 if IG_API_KEYS:
-                    await ctx.send("🔍 正在透過 POST 驗證 IG 帳號是否存在，請稍候...")
+                    await ctx.send("🔍 正在透過 GET 驗證 IG 帳號是否存在，請稍候...")
                     api_url = f"https://{IG_API_HOST}{IG_ENDPOINT_PATH}"
-                    payload = {"username_or_url": target_id}
+                    params = {"username_or_url": target_id}
                     
                     success = False
                     async with aiohttp.ClientSession() as session:
                         for _ in range(len(IG_API_KEYS)):
                             headers = get_next_ig_headers()
                             try:
-                                async with session.post(api_url, headers=headers, json=payload) as response:
+                                async with session.get(api_url, headers=headers, params=params) as response:
                                     if response.status == 200:
                                         result = await response.json()
-                                        if isinstance(result, dict) and len(result) > 0:
+                                        if "user_data" in result:
                                             success = True
                                             break
                             except Exception: continue
@@ -409,7 +408,7 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
 # ==========================================
-# 💡 終極抓蟲指令：使用 POST /get_ig_user_posts.php 測試
+# 💡 終極抓蟲指令：使用 GET 端點驗證
 # ==========================================
 @bot.command(name="debug")
 async def debug_api(ctx, platform: str, target_id: str):
@@ -417,17 +416,17 @@ async def debug_api(ctx, platform: str, target_id: str):
         await ctx.send("目前僅支援 IG 除錯！")
         return
         
-    await ctx.send(f"🔍 正在對 `{target_id}` 透過 POST 端點執行深度除錯...")
+    await ctx.send(f"🔍 正在對 `{target_id}` 透過 GET 端點執行深度除錯...")
     
     posts_url = f"https://{IG_API_HOST}{IG_ENDPOINT_PATH}"
-    payload = {"username_or_url": target_id}
+    params = {"username_or_url": target_id}
     
     async with aiohttp.ClientSession() as session:
         try:
             success = False
             for _ in range(len(IG_API_KEYS)):
                 headers = get_next_ig_headers()
-                async with session.post(posts_url, headers=headers, json=payload) as response:
+                async with session.get(posts_url, headers=headers, params=params) as response:
                     status = response.status
                     if status in [429, 403]: continue 
                     
@@ -438,19 +437,22 @@ async def debug_api(ctx, platform: str, target_id: str):
                         break
                         
                     result = await response.json()
-                    # 支援多種常見的 posts 陣列路徑
-                    items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
+                    user_posts = result.get("user_posts", [])
                     
-                    if not items:
-                        await ctx.send(f"✅ API 連線成功！但找不到 `{target_id}` 的貼文 (清單為空)。")
+                    if not user_posts:
+                        await ctx.send(f"✅ API 連線成功！但找不到 `{target_id}` 的貼文。")
                         break
                         
-                    preview_msg = f"✅ **成功透過 POST 抓取 `{target_id}`！** 共取得 {len(items)} 篇貼文：\n"
-                    for item in reversed(items[:5]):
-                        node = item.get("node", item)
-                        post_id = node.get("id", node.get("pk", "未知ID"))
-                        code = node.get("code", node.get("shortcode", ""))
-                        is_video = node.get("is_video", False)
+                    preview_msg = f"✅ **成功透過 GET 抓取 `{target_id}`！** 最新貼文解析如下：\n"
+                    for item in reversed(user_posts[:5]):
+                        node = item.get("node", {})
+                        data_dict = node.get("media_dict", node)
+                        
+                        post_id = data_dict.get("id", "未知ID")
+                        code = data_dict.get("code", "")
+                        typename = node.get("__typename", "")
+                        
+                        is_video = "Video" in typename
                         current_type = "video" if is_video else "photo"
                         post_url = f"https://www.instagram.com/p/{code}/" if code else "無網址"
                         
@@ -538,7 +540,7 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢 (使用 POST 取得完整貼文列表)
+# 3. Instagram 監控輪詢 (使用 GET 成功驗證過的正確端點)
 # ==========================================
 @tasks.loop(hours=24) 
 async def check_ig_updates():
@@ -555,35 +557,36 @@ async def check_ig_updates():
         for sub_doc in all_ig_subs:
             ig_username = sub_doc["ig_id"]
             dc_channels = sub_doc.get("channels", {})
-            payload = {"username_or_url": ig_username}
+            params = {"username_or_url": ig_username}
             
             for _ in range(len(IG_API_KEYS)):
                 headers = get_next_ig_headers()
                 try:
-                    async with session.post(posts_url, headers=headers, json=payload) as response:
+                    async with session.get(posts_url, headers=headers, params=params) as response:
                         if response.status in [429, 403]: continue 
                         if response.status != 200: break
                             
                         result = await response.json()
-                        items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
-                        if not items: break
+                        user_posts = result.get("user_posts", [])
+                        if not user_posts: break
                         
-                        for item in reversed(items[:12]): # 支援抓取完整版面多篇貼文
-                            node = item.get("node", item)
+                        for item in reversed(user_posts[:5]): 
+                            node = item.get("node", {})
                             data_dict = node.get("media_dict", node)
                             
-                            post_id = data_dict.get("id", node.get("id", node.get("pk")))
-                            code = data_dict.get("code", node.get("code", node.get("shortcode")))
+                            post_id = data_dict.get("id")
+                            code = data_dict.get("code")
                             if not post_id or not code: continue
                             
                             if await history_col.find_one({"ig_post_id": str(post_id)}): continue
                             await history_col.insert_one({"ig_post_id": str(post_id)})
                             
-                            is_video = node.get("is_video", False) or "Video" in node.get("__typename", "")
+                            typename = node.get("__typename", "")
+                            is_video = "Video" in typename
                             current_type = "video" if is_video else "photo"
                             
                             post_url = f"https://www.instagram.com/p/{code}/"
-                            author_name = result.get("user_data", {}).get("username", ig_username)
+                            author_name = result.get("user_data", {}).get("full_name", ig_username)
                             
                             image_url = None
                             candidates = data_dict.get("image_versions2", {}).get("candidates", [])
@@ -705,7 +708,7 @@ async def before_x_check(): await bot.wait_until_ready()
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using POST User Posts API for full list!")
+    return web.Response(text="Discord Bot is alive, using correct GET /ig_get_fb_profile_hover.php endpoint!")
 
 async def start_dummy_server():
     app = web.Application()
