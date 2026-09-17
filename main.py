@@ -610,7 +610,7 @@ async def check_ig_updates():
             await asyncio.sleep(3)
 
 # ==========================================
-# 4. X (Twitter) 監控輪詢 (💡 完美對應實際回傳格式)
+# 4. X (Twitter) 監控輪詢 (💡 萬用字典與清單解析器)
 # ==========================================
 @tasks.loop(minutes=30) 
 async def check_x_updates():
@@ -641,23 +641,30 @@ async def check_x_updates():
                         continue
                     result = await response.json()
                     
-                    # 💡 完美解析實際的 X API 回傳格式（含 pinned 與根目錄貼文）
+                    # 💡 萬用解析：全面支援清單、timeline、tweets、pinned 字典與根目錄貼文
                     items = []
                     if isinstance(result, list):
                         items = result
                     elif isinstance(result, dict):
                         # 檢查常見清單鍵值
-                        for k in ["timeline", "tweets", "data"]:
+                        for k in ["timeline", "tweets", "data", "result"]:
                             if isinstance(result.get(k), list):
                                 items = result[k]
                                 break
-                        # 如果是像這次除錯截圖那樣的單篇/置頂字典格式
+                        
+                        # 如果找不到清單，從單篇/置頂字典中提取
                         if not items:
                             if isinstance(result.get("pinned"), dict):
                                 items.append(result["pinned"])
-                            # 根目錄本身就是一篇貼文（有 text 欄位）
-                            if "text" in result or "tweet_id" in result or "id" in result:
+                            
+                            # 檢查根目錄本身是不是一篇貼文
+                            if any(k in result for k in ["tweet_id", "id", "text", "created_at"]):
                                 items.append(result)
+                            
+                            # 檢查字典內的值是否有包含貼文物件
+                            for val in result.values():
+                                if isinstance(val, dict) and any(k in val for k in ["tweet_id", "id", "text"]):
+                                    items.append(val)
                             
                     if not items: continue
                     
@@ -712,7 +719,7 @@ async def before_x_check(): await bot.wait_until_ready()
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, X timeline dict parser fixed!")
+    return web.Response(text="Discord Bot is alive, X universal dictionary parser applied!")
 
 async def start_dummy_server():
     app = web.Application()
