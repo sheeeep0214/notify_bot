@@ -24,7 +24,7 @@ IG_API_KEYS = [k for k in IG_API_KEYS if k]
 ig_key_index = 0
 
 IG_API_HOST = "instagram-scraper-stable-api.p.rapidapi.com"
-IG_ENDPOINT_PATH = "/ig_get_fb_profile_hover.php"
+IG_ENDPOINT_PATH = "/ig_get_fb_profile_hover.php"  
 
 def get_next_ig_headers():
     global ig_key_index
@@ -42,6 +42,7 @@ intents = discord.Intents.default()
 intents.message_content = True 
 bot = commands.Bot(command_prefix="$", intents=intents, help_command=None)
 
+# --- 資料庫變數 ---
 db_client = None
 db = None
 subscriptions_col = None  
@@ -51,7 +52,7 @@ history_col = None
 async def on_ready():
     global db_client, db, subscriptions_col, history_col
     print(f'Bot 已登入為：{bot.user}')
-    print(f'🔑 已載入 {len(IG_API_KEYS)} 組 IG API Key 進行輪替。')
+    print(f'🔑 已載入 {len(IG_API_KEYS)} 組 Instagram API Key 進行輪替。')
     
     if MONGO_URI:
         try:
@@ -76,7 +77,7 @@ async def on_command_error(ctx, error):
     print(f"Command Error: {error}")
 
 # ==========================================
-# 1. 統一指令區
+# 1. 統一指令區 (無刪減完整版)
 # ==========================================
 @bot.command(name="help")
 async def show_help(ctx):
@@ -162,6 +163,7 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                 except Exception as e:
                     print(f"查詢 YT 頻道名稱失敗: {e}")
 
+        # 完整防呆：檢查是否重複訂閱
         try:
             doc = await asyncio.wait_for(subscriptions_col.find_one({"yt_id": target_id}), timeout=10.0)
         except Exception as e:
@@ -452,7 +454,7 @@ async def debug_api(ctx, platform: str, target_id: str):
                         
                         is_video = "Video" in typename
                         current_type = "video" if is_video else "photo"
-                        post_url = f"https://www.instagram.com/p/{code}/" if code else "無網址"
+                        post_url = f"https://www.ddinstagram.com/p/{code}/" if code else "無網址"
                         
                         preview_msg += f"• [{current_type.upper()}] ID: `{post_id}` | URL: {post_url}\n"
                         
@@ -538,7 +540,7 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢 (正確版！)
+# 3. Instagram 監控輪詢 (💡強化縮圖預覽與 Embed)
 # ==========================================
 @tasks.loop(hours=24) 
 async def check_ig_updates():
@@ -583,8 +585,15 @@ async def check_ig_updates():
                             is_video = "Video" in typename
                             current_type = "video" if is_video else "photo"
                             
-                            post_url = f"https://www.instagram.com/p/{code}/"
+                            # 💡 替換成 DDInstagram 確保連結能產生影片/文字預覽
+                            post_url = f"https://www.ddinstagram.com/p/{code}/"
                             author_name = result.get("user_data", {}).get("full_name", ig_username)
+                            
+                            # 💡 攔截 API 裡面的高畫質圖片直連網址
+                            image_url = None
+                            candidates = data_dict.get("image_versions2", {}).get("candidates", [])
+                            if candidates:
+                                image_url = candidates[0].get("url")
                             
                             for dc_id, config in dc_channels.items():
                                 if current_type not in config.get("types", ["photo", "video"]): continue 
@@ -602,7 +611,15 @@ async def check_ig_updates():
                                     template = custom_msg
                                     
                                 final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
-                                await dc_channel.send(final_msg)
+                                
+                                # 💡 強制產生精美的圖片卡片 (Embed)
+                                embed = None
+                                if image_url:
+                                    embed = discord.Embed(color=0xE1306C) # IG經典粉色
+                                    embed.set_image(url=image_url)
+
+                                # 同時發送文字與 Embed
+                                await dc_channel.send(content=final_msg, embed=embed)
                         break
                 except Exception as e:
                     print(f"檢查 IG 帳號 {ig_username} 失敗: {e}")
@@ -695,7 +712,7 @@ async def before_x_check(): await bot.wait_until_ready()
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using perfectly matched IG parameters with full YT/X features!")
+    return web.Response(text="Discord Bot is alive, fully loaded with ALL features!")
 
 async def start_dummy_server():
     app = web.Application()
