@@ -256,12 +256,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                                         is_error = True
                                         error_msg = result.get("error", result.get("message", "帳號不存在或遭到停權"))
                                 
-                                items = result.get("timeline", result) if isinstance(result, dict) else result
-                                if not isinstance(items, list) or len(items) == 0:
-                                    is_error = True
-                                    if not isinstance(result, dict) or ("error" not in result and "message" not in result):
-                                        error_msg = "帳號不存在，或是該帳號從未發佈過任何推文，無法驗證。"
-                                
                                 if is_error:
                                     await ctx.send(f"❌ 拒絕訂閱：找不到該 X 帳號或無效：`{target_id}`\n({error_msg})")
                                     return
@@ -408,7 +402,7 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
 # ==========================================
-# 💡 升級版除錯指令：支援 IG 與 X 立即測試！
+# 💡 升級版除錯指令
 # ==========================================
 @bot.command(name="debug")
 async def debug_api(ctx, platform: str, target_id: str):
@@ -533,7 +527,7 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢 (改為每 1 小時檢查一次，避免等 24 小時)
+# 3. Instagram 監控輪詢
 # ==========================================
 @tasks.loop(hours=1) 
 async def check_ig_updates():
@@ -616,7 +610,7 @@ async def check_ig_updates():
             await asyncio.sleep(3)
 
 # ==========================================
-# 4. X (Twitter) 監控輪詢 (改為每 30 分鐘檢查一次，解決重啟等待過久問題)
+# 4. X (Twitter) 監控輪詢 (💡 已修復解析邏輯以適應真實 API 結構)
 # ==========================================
 @tasks.loop(minutes=30) 
 async def check_x_updates():
@@ -647,11 +641,25 @@ async def check_x_updates():
                         continue
                     result = await response.json()
                     
-                    items = result.get("timeline", result) if isinstance(result, dict) else result
-                    if not isinstance(items, list) or not items: continue
+                    # 💡 智慧適應各種回傳結構（清單、timeline 鍵、或單篇字典）
+                    items = []
+                    if isinstance(result, list):
+                        items = result
+                    elif isinstance(result, dict):
+                        for k in ["timeline", "tweets", "data"]:
+                            if isinstance(result.get(k), list):
+                                items = result[k]
+                                break
+                        # 如果都沒有找到清單，但 result 本身就是一筆推文資料
+                        if not items and ("tweet_id" in result or "id" in result or "text" in result or "pinned" in result):
+                            if isinstance(result.get("pinned"), dict):
+                                items.append(result["pinned"])
+                            items.append(result)
+                            
+                    if not items: continue
                     
                     for item in reversed(items[:5]): 
-                        tweet_id = item.get("tweet_id")
+                        tweet_id = str(item.get("tweet_id", item.get("id", "")))
                         if not tweet_id: continue
                         
                         if await history_col.find_one({"x_tweet_id": tweet_id}):
@@ -660,7 +668,7 @@ async def check_x_updates():
                         await history_col.insert_one({"x_tweet_id": tweet_id})
                         
                         media = item.get("media", {})
-                        current_type = "video" if "video" in media else "post"
+                        current_type = "video" if ("video" in str(media) or item.get("video")) else "post"
                         
                         post_url = f"https://x.com/{x_username}/status/{tweet_id}"
                         author_name = item.get("author", {}).get("name", x_username)
@@ -684,7 +692,7 @@ async def check_x_updates():
                             final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
                             await dc_channel.send(final_msg)
             except Exception as e:
-                print(f"檢查 X X 帳號 {x_username} 失敗: {e}")
+                print(f"檢查 X 帳號 {x_username} 失敗: {e}")
                 
             await asyncio.sleep(3)
 
@@ -701,7 +709,7 @@ async def before_x_check(): await bot.wait_until_ready()
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, X & IG loops optimized for quicker intervals!")
+    return web.Response(text="Discord Bot is alive, X parsing bug completely fixed!")
 
 async def start_dummy_server():
     app = web.Application()
