@@ -55,7 +55,7 @@ async def on_ready():
     global db_client, db, subscriptions_col, history_col
     print(f'Bot 已登入為：{bot.user}')
     print(f'🔑 已載入 {len(IG_API_KEYS)} 組 Instagram API Key 進行輪替。')
-
+    
     if MONGO_URI:
         try:
             db_client = AsyncIOMotorClient(MONGO_URI)
@@ -66,7 +66,7 @@ async def on_ready():
         except Exception as e:
             print(f"❌ MongoDB 字串解析失敗: {e}")
             return
-
+            
     check_youtube_updates.start()
     check_ig_updates.start()
     check_x_updates.start()
@@ -135,7 +135,7 @@ async def show_help(ctx):
         ),
         inline=False
     )
-
+    
     await ctx.send(embed=embed)
 
 @bot.command(name="sub")
@@ -192,13 +192,13 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
         if platform == "x" and sub_type not in ["all", "post", "video"]:
             await ctx.send("⚠️ X 訂閱類型錯誤！請輸入 `all`、`post` 或 `video`。")
             return
-
+            
         types_to_sub = ["photo", "video"] if (platform == "ig" and sub_type == "all") else \
                        ["post", "video"] if (platform == "x" and sub_type == "all") else [sub_type]
-
+        
         query_key = f"{platform}_id"
         doc = await subscriptions_col.find_one({query_key: target_id})
-
+        
         if doc and dc_id in doc.get("channels", {}):
             await subscriptions_col.update_one(
                 {query_key: target_id}, 
@@ -211,7 +211,7 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                     await ctx.send("🔍 正在透過 POST 驗證 IG 帳號是否存在，請稍候...")
                     api_url = f"https://{IG_API_HOST}{IG_ENDPOINT_PATH}"
                     form_data = urllib.parse.urlencode({"username_or_url": target_id})
-
+                    
                     success = False
                     async with aiohttp.ClientSession() as session:
                         for _ in range(len(IG_API_KEYS)):
@@ -224,13 +224,13 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                                             success = True
                                             break
                             except Exception: continue
-
+                                
                     if not success:
                         await ctx.send(f"⚠️ 驗證過程狀態較特殊，已強制完成訂閱，將由背景輪詢進行抓取。")
                 else:
                     await ctx.send("⚠️ 尚未設定任何 IG API Key，無法進行驗證，拒絕訂閱。")
                     return
-
+                    
             elif platform == "x":
                 if X_API_KEY:
                     await ctx.send("🔍 正在驗證 X (Twitter) 帳號是否存在，請稍候...")
@@ -247,22 +247,22 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                                 if response.status != 200:
                                     await ctx.send(f"❌ 拒絕訂閱：API 暫時遇到速率限制或異常 (HTTP {response.status})，無法驗證帳號真偽。")
                                     return
-
+                                
                                 result = await response.json()
                                 is_error = False
                                 error_msg = "查無此人或無法存取"
-
+                                
                                 if isinstance(result, dict):
                                     if "error" in result or "message" in result:
                                         is_error = True
                                         error_msg = result.get("error", result.get("message", "帳號不存在或遭到停權"))
-
+                                
                                 items = result.get("timeline", result) if isinstance(result, dict) else result
                                 if not isinstance(items, list) or len(items) == 0:
                                     is_error = True
                                     if not isinstance(result, dict) or ("error" not in result and "message" not in result):
                                         error_msg = "帳號不存在，或是該帳號從未發佈過任何推文，無法驗證。"
-
+                                
                                 if is_error:
                                     await ctx.send(f"❌ 拒絕訂閱：找不到該 X 帳號或無效：`{target_id}`\n({error_msg})")
                                     return
@@ -291,10 +291,10 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
 async def unsubscribe_channel(ctx, platform: str, target_id: str):
     platform = platform.lower()
     if platform not in ["yt", "ig", "x"]: return
-
+    
     dc_id = str(ctx.channel.id)
     query_key = f"{platform}_id"
-
+    
     doc = await subscriptions_col.find_one({query_key: target_id})
     if doc and dc_id in doc.get("channels", {}):
         await subscriptions_col.update_one({query_key: target_id}, {"$unset": {f"channels.{dc_id}": ""}})
@@ -310,9 +310,9 @@ async def list_subscriptions(ctx):
     dc_id = str(ctx.channel.id)
     cursor = subscriptions_col.find({})
     all_docs = await cursor.to_list(length=None)
-
+    
     yt_list, ig_list, x_list = [], [], []
-
+    
     for doc in all_docs:
         channels = doc.get("channels", {})
         if dc_id in channels:
@@ -329,11 +329,11 @@ async def list_subscriptions(ctx):
                 types = config.get("types", ["post", "video"])
                 type_str = "all" if len(types) == 2 else types[0]
                 x_list.append(f"{doc['x_id']} (類型: {type_str})")
-
+                
     if not yt_list and not ig_list and not x_list:
         await ctx.send("📂 此文字頻道目前沒有訂閱任何帳號。")
         return
-
+        
     msg = "📋 **此文字頻道目前的訂閱清單：**\n"
     if yt_list:
         msg += "\n**▶️ YouTube 頻道：**\n" + "\n".join([f"- {yt}" for yt in yt_list])
@@ -341,7 +341,7 @@ async def list_subscriptions(ctx):
         msg += "\n\n**📸 Instagram 帳號：**\n" + "\n".join([f"- `{ig}`" for ig in ig_list])
     if x_list:
         msg += "\n\n**🐦 X (Twitter) 帳號：**\n" + "\n".join([f"- `{x}`" for x in x_list])
-
+        
     await ctx.send(msg)
 
 @bot.command(name="clear")
@@ -349,20 +349,20 @@ async def clear_all_subscriptions(ctx):
     dc_id = str(ctx.channel.id)
     cursor = subscriptions_col.find({})
     all_docs = await cursor.to_list(length=None)
-
+    
     count = 0
     for doc in all_docs:
         channels = doc.get("channels", {})
         if dc_id in channels:
             query_key = "yt_id" if "yt_id" in doc else "ig_id" if "ig_id" in doc else "x_id"
             target_id = doc[query_key]
-
+            
             await subscriptions_col.update_one({query_key: target_id}, {"$unset": {f"channels.{dc_id}": ""}})
             updated_doc = await subscriptions_col.find_one({query_key: target_id})
             if not updated_doc.get("channels"):
                 await subscriptions_col.delete_one({query_key: target_id})
             count += 1
-
+            
     if count == 0:
         await ctx.send("⚠️ 此文字頻道本來就沒有任何訂閱。")
     else:
@@ -391,7 +391,7 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
         query_key = "x_id"
     else:
         return
-
+        
     doc = await subscriptions_col.find_one({query_key: target_id})
     if not doc or dc_id not in doc.get("channels", {}):
         await ctx.send(f"⚠️ 請先使用 `$sub` 訂閱該帳號，才能設定專屬訊息。")
@@ -404,7 +404,7 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
         {query_key: target_id}, 
         {"$set": {f"channels.{dc_id}.{msg_type}": custom_message}}
     )
-
+    
     status = "預設訊息" if custom_message is None else "專屬訊息"
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
@@ -416,12 +416,12 @@ async def debug_api(ctx, platform: str, target_id: str):
     if platform.lower() != "ig": 
         await ctx.send("目前僅支援 IG 除錯！")
         return
-
+        
     await ctx.send(f"🔍 正在對 `{target_id}` 透過 POST Form 執行深度除錯...")
-
+    
     posts_url = f"https://{IG_API_HOST}{IG_ENDPOINT_PATH}"
     form_data = urllib.parse.urlencode({"username_or_url": target_id})
-
+    
     async with aiohttp.ClientSession() as session:
         try:
             success = False
@@ -430,36 +430,32 @@ async def debug_api(ctx, platform: str, target_id: str):
                 async with session.post(posts_url, headers=headers, data=form_data) as response:
                     status = response.status
                     if status in [429, 403]: continue 
-
+                    
                     success = True
                     if status != 200:
                         text = await response.text()
                         await ctx.send(f"❌ 發生錯誤 (HTTP {status})：\n```json\n{text[:500]}\n```")
                         break
-
+                        
                     result = await response.json()
                     # 支援各種常見的 posts 回傳結構
                     items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
-
+                    
                     if not items:
                         await ctx.send(f"✅ API 連線成功！但回傳清單為空。完整回傳內容預覽：\n```json\n{str(result)[:400]}\n```")
                         break
-
+                        
                     preview_msg = f"✅ **成功透過 POST 抓取 `{target_id}`！** 共取得 {len(items)} 篇貼文：\n"
                     for item in reversed(items[:12]):
                         node = item.get("node", item)
                         post_id = node.get("id", node.get("pk", "未知ID"))
                         code = node.get("code", node.get("shortcode", ""))
                         is_video = node.get("is_video", False)
-
-
-
-
                         current_type = "video" if is_video else "photo"
                         post_url = f"https://www.instagram.com/p/{code}/" if code else "無網址"
-
+                        
                         preview_msg += f"• [{current_type.upper()}] ID: `{post_id}` | URL: {post_url}\n"
-
+                        
                     await ctx.send(preview_msg)
                     break
             if not success:
@@ -484,10 +480,10 @@ async def check_youtube_updates():
             yt_channel_id = sub_doc["yt_id"]
             dc_channels = sub_doc.get("channels", {})
             if not yt_channel_id.startswith("UC"): continue
-
+                
             playlist_id = "UU" + yt_channel_id[2:]
             api_url = f"https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId={playlist_id}&maxResults=5&key={YOUTUBE_API_KEY}"
-
+            
             try:
                 async with session.get(api_url) as response:
                     if response.status != 200: 
@@ -496,36 +492,36 @@ async def check_youtube_updates():
                     data = await response.json()
                     items = data.get("items", [])
                     if not items: continue
-
+                    
                     video_ids = [item["snippet"]["resourceId"]["videoId"] for item in items]
                     vids_str = ",".join(video_ids)
                     vid_api_url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id={vids_str}&key={YOUTUBE_API_KEY}"
-
+                    
                     async with session.get(vid_api_url) as v_response:
                         if v_response.status != 200: continue
                         v_data = await v_response.json()
-
+                        
                         for v_item in reversed(v_data.get("items", [])):
                             video_id = v_item["id"]
                             snippet = v_item["snippet"]
-
+                            
                             broadcast_status = snippet.get("liveBroadcastContent", "none")
                             if broadcast_status == "upcoming": continue
-
+                                
                             if await history_col.find_one({"video_id": video_id}): continue
                             await history_col.insert_one({"video_id": video_id})
-
+                            
                             video_title = snippet["title"]
                             author_name = snippet["channelTitle"]
                             video_link = f"https://www.youtube.com/watch?v={video_id}"
                             current_type = "live" if broadcast_status == "live" else "video"
-
+                            
                             for dc_id, custom_msgs in dc_channels.items():
                                 dc_channel = bot.get_channel(int(dc_id))
                                 if not dc_channel: continue
-
+                                
                                 custom_msg = custom_msgs.get(current_type) if isinstance(custom_msgs, dict) else custom_msgs
-
+                                
                                 if not custom_msg:
                                     if current_type == "live":
                                         template = "🔴 **{author}** 正在直播或首播！\n**{title}**\n{link}"
@@ -533,12 +529,12 @@ async def check_youtube_updates():
                                         template = "🔔 **{author}** 發布了新影片！\n**{title}**\n{link}"
                                 else:
                                     template = custom_msg
-
+                                    
                                 final_msg = template.replace("{author}", author_name).replace("{title}", video_title).replace("{link}", video_link)
                                 await dc_channel.send(final_msg)
             except Exception as e:
                 print(f"檢查 YT 失敗: {e}")
-
+                
             await asyncio.sleep(2)
 
 # ==========================================
@@ -560,47 +556,46 @@ async def check_ig_updates():
             ig_username = sub_doc["ig_id"]
             dc_channels = sub_doc.get("channels", {})
             form_data = urllib.parse.urlencode({"username_or_url": ig_username})
-
+            
             for _ in range(len(IG_API_KEYS)):
                 headers = get_next_ig_headers()
                 try:
                     async with session.post(posts_url, headers=headers, data=form_data) as response:
                         if response.status in [429, 403]: continue 
                         if response.status != 200: break
-
+                            
                         result = await response.json()
                         items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
                         if not items: break
-
+                        
                         for item in reversed(items[:12]): # 支援抓取完整 12 篇
                             node = item.get("node", item)
                             data_dict = node.get("media_dict", node)
-
+                            
                             post_id = data_dict.get("id", node.get("id", node.get("pk")))
                             code = data_dict.get("code", node.get("code", node.get("shortcode")))
                             if not post_id or not code: continue
-
+                            
                             if await history_col.find_one({"ig_post_id": str(post_id)}): continue
                             await history_col.insert_one({"ig_post_id": str(post_id)})
-
+                            
                             is_video = node.get("is_video", False) or "Video" in node.get("__typename", "")
-
                             current_type = "video" if is_video else "photo"
-
+                            
                             post_url = f"https://www.instagram.com/p/{code}/"
                             author_name = result.get("user_data", {}).get("username", ig_username)
-
+                            
                             image_url = None
                             candidates = data_dict.get("image_versions2", {}).get("candidates", [])
                             if candidates:
                                 image_url = candidates[0].get("url")
-
+                            
                             for dc_id, config in dc_channels.items():
                                 if current_type not in config.get("types", ["photo", "video"]): continue 
-
+                                    
                                 dc_channel = bot.get_channel(int(dc_id))
                                 if not dc_channel: continue
-
+                                
                                 custom_msg = config.get(current_type)
                                 if not custom_msg:
                                     if current_type == "video":
@@ -609,9 +604,9 @@ async def check_ig_updates():
                                         template = "📷 **{author}** 發布了新貼文！\n{link}"
                                 else:
                                     template = custom_msg
-
+                                    
                                 final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
-
+                                
                                 embed = None
                                 if image_url:
                                     embed = discord.Embed(color=0xE1306C)
@@ -621,7 +616,7 @@ async def check_ig_updates():
                         break
                 except Exception as e:
                     print(f"檢查 IG 帳號 {ig_username} 失敗: {e}")
-
+                    
             await asyncio.sleep(3)
 
 # ==========================================
@@ -640,7 +635,7 @@ async def check_x_updates():
         for sub_doc in all_x_subs:
             x_username = sub_doc["x_id"]
             dc_channels = sub_doc.get("channels", {})
-
+            
             api_url = "https://twitter-api45.p.rapidapi.com/timeline.php"
             params = {"screenname": x_username}
             headers = {
@@ -648,39 +643,39 @@ async def check_x_updates():
                 "X-RapidAPI-Host": "twitter-api45.p.rapidapi.com",
                 "Content-Type": "application/json"
             }
-
+            
             try:
                 async with session.get(api_url, headers=headers, params=params) as response:
                     if response.status != 200: 
                         await asyncio.sleep(3) 
                         continue
                     result = await response.json()
-
+                    
                     items = result.get("timeline", result) if isinstance(result, dict) else result
                     if not isinstance(items, list) or not items: continue
-
+                    
                     for item in reversed(items[:5]): 
                         tweet_id = item.get("tweet_id")
                         if not tweet_id: continue
-
+                        
                         if await history_col.find_one({"x_tweet_id": tweet_id}):
                             continue
-
+                            
                         await history_col.insert_one({"x_tweet_id": tweet_id})
-
+                        
                         media = item.get("media", {})
                         current_type = "video" if "video" in media else "post"
-
+                        
                         post_url = f"https://x.com/{x_username}/status/{tweet_id}"
                         author_name = item.get("author", {}).get("name", x_username)
-
+                        
                         for dc_id, config in dc_channels.items():
                             if current_type not in config.get("types", ["post", "video"]):
                                 continue 
-
+                                
                             dc_channel = bot.get_channel(int(dc_id))
                             if not dc_channel: continue
-
+                            
                             custom_msg = config.get(current_type)
                             if not custom_msg:
                                 if current_type == "video":
@@ -689,12 +684,12 @@ async def check_x_updates():
                                     template = "🐦 **{author}** 發布了新推文！\n{link}"
                             else:
                                 template = custom_msg
-
+                                
                             final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
                             await dc_channel.send(final_msg)
             except Exception as e:
                 print(f"檢查 X 帳號 {x_username} 失敗: {e}")
-
+                
             await asyncio.sleep(3)
 
 @check_youtube_updates.before_loop
@@ -726,3 +721,4 @@ async def main():
     await bot.start(DISCORD_TOKEN)
 
 if __name__ == "__main__":
+    asyncio.run(main())
