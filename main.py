@@ -1,3 +1,10 @@
+import os
+from dotenv import load_dotenv
+load_dotenv() # 讓 Python 成功讀取 .env 檔案裡的變數
+
+import discord
+from discord.ext import commands, tasks
+# ... (下方維持原本的程式碼不動)
 import discord
 from discord.ext import commands, tasks
 import asyncio
