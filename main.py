@@ -4,9 +4,6 @@ load_dotenv() # 讓 Python 成功讀取 .env 檔案裡的變數
 
 import discord
 from discord.ext import commands, tasks
-# ... (下方維持原本的程式碼不動)
-import discord
-from discord.ext import commands, tasks
 import asyncio
 import os
 from aiohttp import web
@@ -31,7 +28,7 @@ IG_API_KEYS = [k for k in IG_API_KEYS if k]
 ig_key_index = 0
 
 IG_API_HOST = "instagram-scraper-stable-api.p.rapidapi.com"
-IG_ENDPOINT_PATH = "/get_ig_user_posts.php"  
+IG_ENDPOINT_PATH = "/get_ig_user_posts.php" 
 
 def get_next_ig_headers():
     global ig_key_index
@@ -53,7 +50,7 @@ bot = commands.Bot(command_prefix="$", intents=intents, help_command=None)
 # --- 資料庫變數 ---
 db_client = None
 db = None
-subscriptions_col = None  
+subscriptions_col = None 
 history_col = None       
 
 @bot.event
@@ -238,7 +235,6 @@ async def subscribe_channel(ctx, platform: str, target_id: str, sub_type: str = 
                     return
                     
             elif platform == "x":
-                # --- 這裡使用 X_ok.py 的驗證邏輯 ---
                 if X_API_KEY:
                     await ctx.send("🔍 正在驗證 X (Twitter) 帳號是否存在，請稍候...")
                     api_url = "https://twitter-api45.p.rapidapi.com/timeline.php"
@@ -416,7 +412,7 @@ async def set_custom_message(ctx, platform: str, target_id: str, msg_type: str, 
     await ctx.send(f"✅ 成功將 {platform.upper()} `{target_id}` 的 **{msg_type}** 設定為{status}！")
 
 # ==========================================
-# 💡 終極抓蟲指令：使用 POST + Form Data 進行完整測試
+# 💡 終極除錯指令
 # ==========================================
 @bot.command(name="debug")
 async def debug_api(ctx, platform: str, target_id: str):
@@ -445,10 +441,14 @@ async def debug_api(ctx, platform: str, target_id: str):
                         break
                         
                     result = await response.json()
-                    # 支援各種常見的 posts 回傳結構
-                    items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
+                    if isinstance(result, dict):
+                        items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
+                    elif isinstance(result, list):
+                        items = result
+                    else:
+                        items = []
                     
-                    if not items:
+                    if not isinstance(items, list) or len(items) == 0:
                         await ctx.send(f"✅ API 連線成功！但回傳清單為空。完整回傳內容預覽：\n```json\n{str(result)[:400]}\n```")
                         break
                         
@@ -537,7 +537,11 @@ async def check_youtube_updates():
                                 else:
                                     template = custom_msg
                                     
-                                final_msg = template.replace("{author}", author_name).replace("{title}", video_title).replace("{link}", video_link)
+                                safe_author = str(author_name) if author_name is not None else ""
+                                safe_link = str(video_link) if video_link is not None else ""
+                                safe_title = str(video_title) if video_title is not None else ""
+
+                                final_msg = template.replace("{author}", safe_author).replace("{title}", safe_title).replace("{link}", safe_link)
                                 await dc_channel.send(final_msg)
             except Exception as e:
                 print(f"檢查 YT 失敗: {e}")
@@ -545,7 +549,7 @@ async def check_youtube_updates():
             await asyncio.sleep(2)
 
 # ==========================================
-# 3. Instagram 監控輪詢 (使用 POST Form 取得完整列表)
+# 3. Instagram 監控輪詢
 # ==========================================
 @tasks.loop(hours=24) 
 async def check_ig_updates():
@@ -572,10 +576,16 @@ async def check_ig_updates():
                         if response.status != 200: break
                             
                         result = await response.json()
-                        items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
-                        if not items: break
+                        if isinstance(result, dict):
+                            items = result.get("data", {}).get("posts", result.get("posts", result.get("user_posts", [])))
+                        elif isinstance(result, list):
+                            items = result
+                        else:
+                            items = []
                         
-                        for item in reversed(items[:12]): # 支援抓取完整 12 篇
+                        if not isinstance(items, list) or len(items) == 0: break
+                        
+                        for item in reversed(items[:12]):
                             node = item.get("node", item)
                             data_dict = node.get("media_dict", node)
                             
@@ -590,7 +600,7 @@ async def check_ig_updates():
                             current_type = "video" if is_video else "photo"
                             
                             post_url = f"https://www.instagram.com/p/{code}/"
-                            author_name = result.get("user_data", {}).get("username", ig_username)
+                            author_name = result.get("user_data", {}).get("username", ig_username) if isinstance(result, dict) else ig_username
                             
                             image_url = None
                             candidates = data_dict.get("image_versions2", {}).get("candidates", [])
@@ -612,7 +622,10 @@ async def check_ig_updates():
                                 else:
                                     template = custom_msg
                                     
-                                final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
+                                safe_author = str(author_name) if author_name is not None else ig_username
+                                safe_link = str(post_url) if post_url is not None else ""
+
+                                final_msg = template.replace("{author}", safe_author).replace("{link}", safe_link)
                                 
                                 embed = None
                                 if image_url:
@@ -629,7 +642,6 @@ async def check_ig_updates():
 # ==========================================
 # 4. X (Twitter) 監控輪詢
 # ==========================================
-# --- 完全使用 X_ok.py 的邏輯，僅防呆避免 null 報錯 ---
 @tasks.loop(hours=6) 
 async def check_x_updates():
     if not X_API_KEY or subscriptions_col is None: return
@@ -666,12 +678,11 @@ async def check_x_updates():
                         tweet_id = item.get("tweet_id")
                         if not tweet_id: continue
                         
-                        if await history_col.find_one({"x_tweet_id": tweet_id}):
+                        if await history_col.find_one({"x_tweet_id": str(tweet_id)}):
                             continue
                             
-                        await history_col.insert_one({"x_tweet_id": tweet_id})
+                        await history_col.insert_one({"x_tweet_id": str(tweet_id)})
                         
-                        # 💡 最小幅度防呆：如果 API 漏掉 media 或 author 傳了 null，就不會報 TypeError 導致中斷
                         media = item.get("media") or {}
                         current_type = "video" if isinstance(media, dict) and "video" in media else "post"
                         
@@ -696,7 +707,10 @@ async def check_x_updates():
                             else:
                                 template = custom_msg
                                 
-                            final_msg = template.replace("{author}", author_name).replace("{link}", post_url)
+                            safe_author = str(author_name) if author_name is not None else x_username
+                            safe_link = str(post_url) if post_url is not None else ""
+
+                            final_msg = template.replace("{author}", safe_author).replace("{link}", safe_link)
                             await dc_channel.send(final_msg)
             except Exception as e:
                 print(f"檢查 X 帳號 {x_username} 失敗: {e}")
@@ -716,7 +730,7 @@ async def before_x_check(): await bot.wait_until_ready()
 # 5. 假 Web 伺服器
 # ==========================================
 async def handle(request):
-    return web.Response(text="Discord Bot is alive, using ig_ok.py base and safe X_ok.py code!")
+    return web.Response(text="Discord Bot is alive on GCP!")
 
 async def start_dummy_server():
     app = web.Application()
